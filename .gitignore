@@ -13,7 +13,7 @@ wheels/
 llm_sdk/
 
 # Outputs
-data/output/
+src/data/output/
 
 # Type check
 .mypy_cache/
