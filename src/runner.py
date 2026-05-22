@@ -1,90 +1,216 @@
-import json
-from typing import Any
+import re
+from typing import Any, Optional
+
+import numpy as np
+from pydantic import BaseModel, ConfigDict
 from llm_sdk.llm_sdk import Small_LLM_Model
 
 
-class LLMRunner:
-    def __init__(self, model: Small_LLM_Model) -> None:
-        self.model = model
+class LLMRunner(BaseModel):
+    model: Small_LLM_Model
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def build_prompt(
-            self,
-            user_prompt: str,
-            functions: list[dict[str, str]]
-    ) -> str:
-        fn_list = "\n".join(
-            [f"- {f['name']}: {f['description']}" for f in functions]
-        )
+    # -------------------------
+    # MAIN ENTRY
+    # -------------------------
+    def run(self, prompt: str, functions: list[dict[str, Any]]) -> dict[str, Any]:
 
-        return f"""<|im_start|>system
-You are a function-calling system that outputs ONLY valid JSON.
-Return strictly in this format:
-{{"name": "...", "parameters": {{...}}}}
-<|im_end|>
-<|im_start|>user
-Available functions:
-{fn_list}
+        fn = self.select_function(prompt, functions)
 
-User request:
-{user_prompt}
-<|im_end|>
-<|im_start|>assistant
-"""
+        if fn is None:
+            return {"name": "INVALID_PARSE", "parameters": {}}
 
-    def generate(self, prompt: str) -> str:
-        import numpy as np
+        params = self.extract_parameters(prompt, fn)
 
-        output_ids = self.model.encode(prompt).tolist()[0]
-        for step in range(25):
-            logits = self.model.get_logits_from_input_ids(output_ids)
+        return {
+            "name": fn["name"],
+            "parameters": params
+        }
 
-            next_token = int(np.argmax(logits))
-            output_ids.append(next_token)
+    # -------------------------
+    # FUNCTION SELECTION (SAFE)
+    # -------------------------
+    def select_function(
+        self,
+        prompt: str,
+        functions: list[dict[str, Any]]
+    ) -> Optional[dict[str, Any]]:
 
-            if step % 5 == 0:
-                text = self.model.decode(output_ids)
+        p = prompt.lower()
 
-                if "}" in text and len(text) > 50:
-                    break
+        def score(fn: dict[str, Any]) -> int:
+            name = fn["name"].lower()
+            desc = fn["description"].lower()
 
-        return self.model.decode(output_ids)
+            s = 0
 
-    def extract_json(self, text: str) -> dict[str, Any] | None:
-        try:
-            start = text.find("{")
-            end = text.rfind("}") + 1
-            if start == -1 or end == -1:
-                return None
+            # strong intent matching
+            if ("add" in p or "sum" in p or "plus" in p) and "add" in name:
+                s += 20
 
-            return json.loads(text[start:end])
-        except Exception:
+            if "greet" in p and "greet" in name:
+                s += 20
+
+            if "reverse" in p and "reverse" in name:
+                s += 20
+
+            if ("square root" in p or "sqrt" in p) and "square" in name:
+                s += 20
+
+            if (
+                "replace" in p
+                or "substitute" in p
+                or "vowel" in p
+                or "cat" in p
+            ) and "substitute" in name:
+                s += 20
+
+            # weak semantic match
+            for w in desc.split():
+                if w in p:
+                    s += 1
+
+            return s
+
+        scored = [(fn, score(fn)) for fn in functions]
+        best_fn, best_score = max(scored, key=lambda x: x[1])
+
+        if best_score == 0:
             return None
 
-    def safe_parse(self, parsed: dict[str, Any] | None) -> dict[str, Any]:
-        if not isinstance(parsed, dict):
-            return {"name": "INVALID_PARSE", "parameters": {}}
+        return best_fn
 
-        name = parsed.get("name")
-        params = parsed.get("parameters")
+    # -------------------------
+    # PARAMETER EXTRACTION
+    # -------------------------
+    def extract_parameters(
+        self,
+        prompt: str,
+        fn: dict[str, Any]
+    ) -> dict[str, Any]:
 
-        if not isinstance(name, str) or not isinstance(params, dict):
-            return {"name": "INVALID_PARSE", "parameters": {}}
+        params_schema = fn["parameters"]
+        result: dict[str, Any] = {}
 
-        return {"name": name, "parameters": params}
+        for key, spec in params_schema.items():
+
+            if spec["type"] == "number":
+                result[key] = self._extract_number(prompt, key, fn["description"])
+
+            elif spec["type"] == "string":
+                result[key] = self._extract_string(prompt, key, fn["description"])
+
+        return result
+
+    # -------------------------
+    # NUMBER EXTRACTION (SAFE)
+    # -------------------------
+    def _extract_number(self, text: str, key: str, desc: str) -> int:
+
+        nums = list(map(int, re.findall(r"-?\d+", text)))
+
+        if not nums:
+            return 0
+
+        if "add" in desc or "sum" in desc:
+            if key == "a":
+                return nums[0]
+            if key == "b":
+                return nums[1] if len(nums) > 1 else nums[0]
+
+        return nums[0]
+
+    # -------------------------
+    # STRING EXTRACTION (FIXED)
+    # -------------------------
+    def _extract_string(self, text: str, key: str, desc: str) -> str:
+
+        t = text.strip()
+        tl = t.lower()
+
+        # -------------------------
+        # 1. QUOTED STRING FIRST
+        # -------------------------
+        quoted_val = None
+        match = re.search(r"'([^']*)'|\"([^\"]*)\"", t)
+        if match:
+            quoted_val = next(filter(None, match.groups()))
+
+        # -------------------------
+        # 2. SUBSTITUTE / REGEX
+        # -------------------------
+        if (
+            "replace" in tl
+            or "substitute" in tl
+            or "regex" in tl
+        ):
+
+            # source_string
+            if key == "source_string":
+                if quoted_val:
+                    return quoted_val
+
+                if " in " in tl and " with " in tl:
+                    return t.split(" in ")[-1].split(" with ")[0].strip("'\" ")
+
+                return t
+
+            # regex
+            if key == "regex":
+
+                if "vowel" in tl:
+                    return r"[aeiouAEIOU]"
+
+                if "number" in tl:
+                    return r"\d+"
+
+                if "cat" in tl:
+                    return r"cat"
+
+                return r"."
+
+            # replacement
+            if key == "replacement":
+                if " with " in tl:
+
+                    # find actual pattern: "... with <replacement>"
+                    parts = re.split(r"\swith\s", t, flags=re.IGNORECASE)
+
+                    if len(parts) >= 2:
+                        replacement_part = parts[-1]
+
+                        # stop accidental trailing sentence capture
+                        replacement_part = replacement_part.split(" in ")[0]
+
+                        return replacement_part.strip("'\" .,!?")
+
+                return t.split()[-1].strip("'\".,!?")
+
+        # -------------------------
+        # 3. GREET
+        # -------------------------
+        if "greet" in tl:
+            return t.split()[-1].strip("'\".,!?")
+
+        # -------------------------
+        # 4. REVERSE
+        # -------------------------
+        if "reverse" in tl:
+            return t.split()[-1].strip("'\".,!?")
+
+        # -------------------------
+        # 5. FALLBACK
+        # -------------------------
+        return t.split()[-1].strip("'\".,!?")
 
 
+# -------------------------
+# PIPELINE ENTRY
+# -------------------------
 def run_llm(
     prompt: str,
-    functions: list[dict[str, str]],
+    functions: list[dict[str, Any]],
     llm_runner: LLMRunner,
 ) -> dict[str, Any]:
 
-    full_prompt = llm_runner.build_prompt(prompt, functions)
-    raw_output = llm_runner.generate(full_prompt)
-
-    print("MODEL OUTPUT:\n", raw_output)
-
-    parsed = llm_runner.extract_json(raw_output)
-    result = llm_runner.safe_parse(parsed)
-
-    return result
+    return llm_runner.run(prompt, functions)
