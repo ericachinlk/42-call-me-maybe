@@ -24,25 +24,36 @@ class ConstrainedParamDecoder:
     
     def _build_prompt(self, fn, user_prompt):
         return f"""
-        You are a parameter extraction system.
+    You are a STRICT parameter extraction engine.
 
-        CRITICAL RULES:
-        - Do NOT perform any computation
-        - Do NOT transform or modify values
-        - Do NOT reverse, calculate, or interpret meaning
-        - Only extract raw values from the input text
+    CRITICAL RULES:
+    - Output MUST match schema exactly
+    - DO NOT add extra keys
+    - DO NOT compute values
+    - DO NOT modify values
+    - DO NOT explain anything
+    - ONLY extract values directly from the input text
 
-        Function: {fn.name}
-        Description: {fn.description}
+    Function name:
+    {fn.name}
 
-        Parameters:
-        {fn.parameters}
+    Function description:
+    {fn.description}
 
-        User request:
-        {user_prompt}
+    Allowed parameters (STRICT):
+    {list(fn.parameters.keys())}
 
-        Return ONLY JSON with extracted values.
-        """.strip()
+    Parameter types:
+    { {k: v.type for k, v in fn.parameters.items()} }
+
+    User request:
+    {user_prompt}
+
+    Return ONLY valid JSON with EXACT keys:
+    {{
+    {", ".join([f'"{k}": <value>' for k in fn.parameters.keys()])}
+    }}
+    """.strip()
 
     def _generate(self, input_ids, max_tokens=80):
         generated = []
