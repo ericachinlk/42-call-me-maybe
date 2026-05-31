@@ -7,44 +7,52 @@ from src.parameter_extractor import ParameterExtractor
 def main():
 
     llm = LLMEngine()
+
     functions = load_functions("src/data/input/functions_definition.json")
 
     fn_map = {f.name: f for f in functions}
 
-    decoder = ParameterExtractor(llm)
+    extractor = ParameterExtractor(llm)
     selector = FunctionSelector(llm, functions,)
 
     tests = [
         ("What is the sum of 265 and 345?", "fn_add_numbers"),
         ("Greet shrek", "fn_greet"),
         ("Reverse the string 'hello'", "fn_reverse_string"),
+        ("Calculate the square root of 144", "fn_get_square_root"),
+        ("Replace all vowels in 'Programming is fun' with asterisks", "fn_substitute_string_with_regex")
     ]
-
-    # for prompt, fn_name in tests:
-
-    #     print("=" * 60)
-    #     print("Prompt:", prompt)
-    #     print("Function:", fn_name)
-
-    #     params = decoder.extract(fn_map[fn_name], prompt)
-
-    #     print("Parameters:", params)
     
     for prompt, expected_fn in tests:
         print("=" * 60)
         print("Prompt:", prompt)
 
-        # STEP 1: predicted function (REALISTIC TEST)
-        fn_name = selector.select_function(prompt)
+        fn_name = selector.select(prompt)
 
         print("Predicted Function:", fn_name)
+        print("Expected Function:", expected_fn)
+
+        # assert fn_name == expected_fn, f"Mismatch: {fn_name} != {expected_fn}"
 
         fn_def = fn_map[fn_name]
 
-        # STEP 2: parameters
-        params = decoder.extract(fn_def, prompt)
+        params = extractor.extract(fn_def, prompt)
 
-        print("Parameters:", params['parameters'])
+        print("Parameters:", params)
+
+
+def run(prompt, selector, extractor, fn_map):
+
+    fn_name = selector.select(prompt)
+    fn_def = fn_map[fn_name]
+
+    params = extractor.extract(fn_def, prompt)
+
+    return {
+        "prompt": prompt,
+        "name": fn_name,
+        "parameters": params
+    }
 
 
 if __name__ == "__main__":
