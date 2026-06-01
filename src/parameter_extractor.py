@@ -8,127 +8,187 @@ class ParameterExtractor:
     def __init__(self, llm):
         self.llm = llm
 
+    # -------------------------------------------------
+    # MAIN ENTRY
+    # -------------------------------------------------
     def extract(self, fn_def, prompt: str):
         params = {}
 
-        numbers = re.findall(r"-?\d+(?:\.\d+)?", prompt)
+        numbers = self._get_numbers(prompt)
         strings = self._extract_strings(prompt)
 
-        param_items = list(fn_def.parameters.items())
+        num_i = 0
 
-        for i, (param_name, param_type) in enumerate(param_items):
+        for param_name, param_type in fn_def.parameters.items():
 
+            value = None
+            name = param_name.lower()
+
+            # -------------------------
+            # NUMBER
+            # -------------------------
             if param_type.type == "number":
-                value = numbers[i] if i < len(numbers) else 0.0
+                value = numbers[num_i] if num_i < len(numbers) else 0.0
+                num_i += 1
 
+            # -------------------------
+            # STRING
+            # -------------------------
             elif param_type.type == "string":
-                value = strings[0] if strings else ""
 
-            else:
-                value = None
+                if "source" in name or "input" in name:
+                    value = self._get_source_string(prompt, strings)
+
+                elif "replacement" in name:
+                    value = self._extract_replacement(prompt)
+
+                elif "regex" in name:
+                    value = self._infer_regex(prompt)
+
+                else:
+                    value = strings[0] if strings else ""
+
+            # fallback safety
+            if value is None:
+                value = self._default_value(name, param_type.type)
 
             params[param_name] = self._cast(value, param_type.type)
 
         return params
 
-    def _extract_strings(self, prompt: str) -> list[str]:
+    # -------------------------------------------------
+    # SOURCE STRING (robust)
+    # -------------------------------------------------
+    def _get_source_string(self, prompt, strings):
+        if strings:
+            return max(strings, key=len)
 
-        # 1. Extract quoted strings first (highest priority)
+        return prompt
+
+    # -------------------------------------------------
+    # REPLACEMENT (FIXED - no leakage)
+    # -------------------------------------------------
+    def _extract_replacement(self, prompt: str):
+
+        match = re.search(
+            r"\bwith\s+['\"]?(.*?)['\"]?\s*(?:$|in\b)",
+            prompt,
+            re.IGNORECASE
+        )
+
+        if match:
+            return match.group(1).strip(" '\"")
+
+        return ""
+
+    # -------------------------------------------------
+    # REGEX INFERENCE (SAFE + COMPLETE)
+    # -------------------------------------------------
+    # def _infer_regex(self, prompt: str):
+    #     p = prompt.lower()
+
+    #     # -------------------------
+    #     # 1. LITERAL WORD (HIGHEST PRIORITY)
+    #     # -------------------------
+    #     quoted = re.findall(r"'([^']*)'|\"([^\"]*)\"", prompt)
+    #     quoted = [a or b for a, b in quoted]
+
+    #     if quoted:
+    #         # assume first quoted token is target word
+    #         return quoted[0]
+
+    #     # -------------------------
+    #     # 2. KEYWORD PATTERNS
+    #     # -------------------------
+    #     if "vowel" in p:
+    #         return r"[aeiouAEIOU]"
+
+    #     if "number" in p or "digit" in p:
+    #         return r"\d+"
+
+    #     if "space" in p:
+    #         return r"\s+"
+
+    #     # -------------------------
+    #     # 3. FALLBACK (ONLY LAST RESORT)
+    #     # -------------------------
+    #     return r"\w+"
+    
+    def _infer_regex(self, prompt: str):
+
+        p = prompt.lower()
+
+        if "vowel" in p:
+            return r"[aeiouAEIOU]"
+
+        if "number" in p or "digit" in p:
+            return r"\d+"
+
+        if "space" in p:
+            return r"\s+"
+
+        if "word" in p:
+            quoted = re.findall(r"'([^']*)'|\"([^\"]*)\"", prompt)
+            quoted = [a or b for a, b in quoted]
+
+            if quoted:
+                return quoted[0]
+            # return r"\w+"
+
+        return ""
+
+    # -------------------------------------------------
+    # NUMBER EXTRACTION
+    # -------------------------------------------------
+    def _get_numbers(self, prompt):
+        return [float(x) for x in re.findall(r"-?\d+(?:\.\d+)?", prompt)]
+
+    # -------------------------------------------------
+    # STRING EXTRACTION
+    # -------------------------------------------------
+    def _extract_strings(self, prompt: str):
+
         quoted = re.findall(r"'([^']*)'|\"([^\"]*)\"", prompt)
         strings = [a or b for a, b in quoted]
 
         if strings:
             return strings
 
-        # 2. Remove instruction words (very important)
         cleaned = re.sub(
-            r"\b(greet|reverse|replace|calculate|sum|substitute|vowels|string)\b",
+            r"\b(greet|reverse|replace|calculate|sum|substitute)\b",
             "",
             prompt,
             flags=re.IGNORECASE
         )
 
-        # 3. Extract remaining words
         words = re.findall(r"[A-Za-z]+", cleaned)
 
-        # 4. Filter stopwords
-        stopwords = {
-            "what", "is", "the", "a", "an", "and", "with", "to", "in", "of"
-        }
+        stop = {"what", "is", "the", "and", "with", "in", "to", "of"}
 
-        return [w for w in words if w.lower() not in stopwords]
-
-    # def extract(self, fn_def, prompt: str):
-
-    #     params = {}
-
-    #     for param_name, param_type in fn_def.parameters.items():
-
-    #         candidates = self._extract_candidates(
-    #             prompt,
-    #             param_type.type,
-    #             param_name
-    #         )
-
-    #         value = self._select_best_candidate(
-    #             candidates,
-    #             param_type.type
-    #         )
-
-    #         params[param_name] = self._cast(value, param_type.type)
-
-    #     return params
+        return [w for w in words if w.lower() not in stop]
 
     # -------------------------------------------------
-    # Candidate extraction (STRICT + TYPE-AWARE)
+    # DEFAULTS
     # -------------------------------------------------
-    def _extract_candidates(self, prompt: str, param_type: str, param_name: str):
+    def _default_value(self, name, t):
 
-        if param_type == "number":
-            return re.findall(r"-?\d+(?:\.\d+)?", prompt)
+        if t == "number":
+            return 0.0
 
-        if param_type == "string":
-
-            # remove function verbs first (VERY IMPORTANT)
-            cleaned = re.sub(
-                r"\b(greet|reverse|replace|calculate|sum|substitute)\b",
-                "",
-                prompt,
-                flags=re.IGNORECASE
-            )
-
-            # extract quoted strings first
-            quoted = re.findall(r"'([^']*)'|\"([^\"]*)\"", cleaned)
-            quoted = [a or b for a, b in quoted]
-
-            if quoted:
-                return quoted
-
-            # fallback: ONLY remaining meaningful words
-            words = re.findall(r"[A-Za-z]+", cleaned)
-
-            stop = {
-                "what", "is", "the", "and", "with", "all", "in", "to"
-            }
-
-            return [w for w in words if w.lower() not in stop]
-
-    # -------------------------------------------------
-    # SAFE selection (NO execution, NO heuristics)
-    # -------------------------------------------------
-    def _select_best_candidate(self, candidates, param_type):
-
-        if not candidates:
+        if t == "string":
+            if "regex" in name:
+                return ".*"
             return ""
 
-        # safest possible choice:
-        # do NOT let model "compute" or "transform"
-        return candidates[0]
+        return None
 
     # -------------------------------------------------
-    # TYPE CASTING (SAFE)
+    # CASTING (SAFE)
     # -------------------------------------------------
     def _cast(self, value, t):
+
+        if value is None:
+            return None
 
         if t == "number":
             try:
@@ -143,6 +203,222 @@ class ParameterExtractor:
             return str(value).lower() in {"true", "1", "yes"}
 
         return value
+
+
+# class ParameterExtractor:
+#     def __init__(self, llm):
+#         self.llm = llm
+
+#     def extract(self, fn_def, prompt: str):
+#         params = {}
+
+#         # extract raw signals once
+#         # numbers = re.findall(r"-?\d+(?:\.\d+)?", prompt)
+#         numbers = self._get_numbers(prompt)
+#         num_i = 0
+
+#         strings = self._extract_strings(prompt)
+
+#         words = re.findall(r"[A-Za-z]+", prompt)
+
+#         for param_name, param_type in fn_def.parameters.items():
+
+#             value = None
+
+#             # -------------------------
+#             # NUMBER PARAMETERS
+#             # -------------------------
+#             # if param_type.type == "number":
+#             #     value = numbers[0] if numbers else 0
+#             if param_type.type == "number":
+#                 value = numbers[num_i] if num_i < len(numbers) else 0
+#                 num_i += 1
+
+#             # -------------------------
+#             # STRING PARAMETERS (ROLE-AWARE)
+#             # -------------------------
+#             elif param_type.type == "string":
+
+#                 name = param_name.lower()
+
+#                 # SOURCE STRING (main input text)
+#                 if "source" in name or "input" in name:
+#                     value = self._find_longest_phrase(strings, prompt)
+
+#                 # REPLACEMENT TEXT
+#                 elif "replacement" in name:
+#                     # value = self._find_literal_after_keywords(prompt, ["with", "as"])
+#                     value = self._extract_replacement(prompt)
+
+#                 # REGEX / PATTERN
+#                 elif "regex" in name:
+#                     value = self._infer_regex(prompt)
+
+#                 else:
+#                     # value = strings[0] if strings else ""
+#                     if value is None or value == "":
+#                         value = self._default_value(param_name, param_type.type)
+            
+#             params[param_name] = self._cast(value, param_type.type)
+
+#         print("RAW PROMPT:", prompt)
+#         print("REPLACEMENT RAW SLICE:", prompt[prompt.lower().find("with"):])
+#         print(repr(prompt))
+#         print(self._extract_replacement(prompt))
+
+#         return params
+    
+#     def _find_longest_phrase(self, strings, prompt):
+#         if not strings:
+#             return ""
+
+#         # prefer longest quoted string
+#         return max(strings, key=len)
+    
+#     def _find_literal_after_keywords(self, prompt, keywords):
+#         for kw in keywords:
+#             if kw in prompt.lower():
+#                 parts = prompt.lower().split(kw)
+#                 if len(parts) > 1:
+#                     return parts[1].strip(" '\"")
+#         return ""
+    
+#     def _infer_regex(self, prompt: str):
+#         p = prompt.lower()
+
+#         if "vowel" in p:
+#             return r"[aeiouAEIOU]"
+
+#         if "digit" in p:
+#             return r"\d+"
+
+#         if "space" in p:
+#             return r"\s+"
+
+#         return None
+    
+#     def _get_numbers(self, prompt):
+#         return [float(x) for x in re.findall(r"-?\d+(?:\.\d+)?", prompt)]
+    
+#     def _extract_replacement(self, prompt: str):
+#         # match: "... with XYZ"
+#         match = re.search(
+#             r"\bwith\s+['\"]?(.*?)['\"]?\s*$",
+#             prompt,
+#             re.IGNORECASE
+#         )
+
+#         if match:
+#             return match.group(1).strip()
+
+#         return ""
+    
+#     def _default_value(self, name, t):
+#         if t == "number":
+#             return 0.0
+
+#         if t == "string":
+
+#             if "regex" in name:
+#                 return ".*"   # safest neutral regex
+
+#             return ""
+
+#         return None
+
+#     def _extract_strings(self, prompt: str) -> list[str]:
+
+#         # 1. Extract quoted strings first (highest priority)
+#         quoted = re.findall(r"'([^']*)'|\"([^\"]*)\"", prompt)
+#         strings = [a or b for a, b in quoted]
+
+#         if strings:
+#             return strings
+
+#         # 2. Remove instruction words (very important)
+#         cleaned = re.sub(
+#             r"\b(greet|reverse|replace|calculate|sum|substitute|vowels|string)\b",
+#             "",
+#             prompt,
+#             flags=re.IGNORECASE
+#         )
+
+#         # 3. Extract remaining words
+#         words = re.findall(r"[A-Za-z]+", cleaned)
+
+#         # 4. Filter stopwords
+#         stopwords = {
+#             "what", "is", "the", "a", "an", "and", "with", "to", "in", "of"
+#         }
+
+#         return [w for w in words if w.lower() not in stopwords]
+
+#     # -------------------------------------------------
+#     # Candidate extraction (STRICT + TYPE-AWARE)
+#     # -------------------------------------------------
+#     def _extract_candidates(self, prompt: str, param_type: str, param_name: str):
+
+#         if param_type == "number":
+#             return re.findall(r"-?\d+(?:\.\d+)?", prompt)
+
+#         if param_type == "string":
+
+#             # remove function verbs first (VERY IMPORTANT)
+#             cleaned = re.sub(
+#                 r"\b(greet|reverse|replace|calculate|sum|substitute)\b",
+#                 "",
+#                 prompt,
+#                 flags=re.IGNORECASE
+#             )
+
+#             # extract quoted strings first
+#             quoted = re.findall(r"'([^']*)'|\"([^\"]*)\"", cleaned)
+#             quoted = [a or b for a, b in quoted]
+
+#             if quoted:
+#                 return quoted
+
+#             # fallback: ONLY remaining meaningful words
+#             words = re.findall(r"[A-Za-z]+", cleaned)
+
+#             stop = {
+#                 "what", "is", "the", "and", "with", "all", "in", "to"
+#             }
+
+#             return [w for w in words if w.lower() not in stop]
+
+#     # -------------------------------------------------
+#     # SAFE selection (NO execution, NO heuristics)
+#     # -------------------------------------------------
+#     def _select_best_candidate(self, candidates, param_type):
+
+#         if not candidates:
+#             return ""
+
+#         # safest possible choice:
+#         # do NOT let model "compute" or "transform"
+#         return candidates[0]
+
+#     # -------------------------------------------------
+#     # TYPE CASTING (SAFE)
+#     # -------------------------------------------------
+#     def _cast(self, value, t):
+#         if value is None:
+#             return None
+
+#         if t == "number":
+#             try:
+#                 return float(value)
+#             except:
+#                 return 0.0
+
+#         if t == "string":
+#             return str(value).strip("'\"")
+
+#         if t == "boolean":
+#             return str(value).lower() in {"true", "1", "yes"}
+
+#         return value
 
 
 # class ParameterExtractor:

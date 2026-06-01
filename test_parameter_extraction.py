@@ -15,12 +15,22 @@ def main():
     extractor = ParameterExtractor(llm)
     selector = FunctionSelector(llm, functions,)
 
+    # tests = [
+    #     ("What is the sum of 265 and 345?", "fn_add_numbers"),
+    #     ("Greet shrek", "fn_greet"),
+    #     ("Reverse the string 'hello'", "fn_reverse_string"),
+    #     ("Calculate the square root of 144", "fn_get_square_root"),
+    #     ("Replace all vowels in 'Programming is fun' with asterisks", "fn_substitute_string_with_regex")
+    # ]
+
     tests = [
-        ("What is the sum of 265 and 345?", "fn_add_numbers"),
-        ("Greet shrek", "fn_greet"),
-        ("Reverse the string 'hello'", "fn_reverse_string"),
-        ("Calculate the square root of 144", "fn_get_square_root"),
-        ("Replace all vowels in 'Programming is fun' with asterisks", "fn_substitute_string_with_regex")
+        # ("What is the sum of 2 and 3?", "fn_add_numbers"),
+        # ("Greet john", "fn_greet"),
+        # ("Reverse the string 'world'", "fn_reverse_string"),
+        # ("What is the square root of 16?", "fn_get_square_root"),
+        ("Replace all vowels in 'Programming is fun' with asterisks", "fn_substitute_string_with_regex"),
+        ("Substitute the word 'cat' with 'dog' in 'The cat sat on the mat with another cat'", "fn_substitute_string_with_regex"),
+        ("Replace all numbers in \"Hello 34 I'm 233 years old\" with NUMBERS", "fn_substitute_string_with_regex")
     ]
     
     for prompt, expected_fn in tests:

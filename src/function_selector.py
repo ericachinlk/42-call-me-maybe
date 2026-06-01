@@ -169,17 +169,49 @@ class FunctionSelector:
             for fn in functions
         }
 
+    # def build_prompt(self, user_prompt: str) -> str:
+    #     lines = ["Available functions:\n"]
+
+    #     for fn in self.functions:
+    #         lines.append(f"Function: {fn.name}")
+    #         lines.append(f"Description: {fn.description}")
+    #         lines.append("")
+
+    #     lines.append(f"User request: {user_prompt}")
+    #     lines.append("")
+    #     lines.append("Function:")
+
+    #     return "\n".join(lines)
+    
     def build_prompt(self, user_prompt: str) -> str:
-        lines = ["Available functions:\n"]
+        lines = []
+
+        lines.append("You are a function selection system.")
+        lines.append("Select EXACTLY ONE function that best matches the user request.")
+        lines.append("Do NOT execute the function.")
+        lines.append("Only output the function name.")
+        lines.append("")
+
+        lines.append("Available functions:")
+        lines.append("")
 
         for fn in self.functions:
-            lines.append(f"Function: {fn.name}")
+            lines.append(f"Name: {fn.name}")
             lines.append(f"Description: {fn.description}")
+
+            # include parameters (VERY IMPORTANT)
+            lines.append("Parameters:")
+            for param_name, param in fn.parameters.items():
+                lines.append(f"  - {param_name}: {param.type}")
+
             lines.append("")
 
-        lines.append(f"User request: {user_prompt}")
+        lines.append("User request:")
+        lines.append(user_prompt)
         lines.append("")
-        lines.append("Function:")
+
+        lines.append("Return ONLY the function name:")
+        lines.append("")
 
         return "\n".join(lines)
 
@@ -232,3 +264,5 @@ class FunctionSelector:
             for fn_name, seq in self.function_tokens.items():
                 if generated == seq:
                     return fn_name
+
+
