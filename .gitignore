@@ -17,3 +17,6 @@ src/data/output/
 
 # Type check
 .mypy_cache/
+
+# Test files
+tests/

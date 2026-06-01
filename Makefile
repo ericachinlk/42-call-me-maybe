@@ -26,10 +26,10 @@ clean:
 	find . -type f -name "*.pyc" -delete
 
 lint:
-	uv run python -m flake8 . --exclude=.venv,__pycache__,.mypy_cache,llm_sdk
+	uv run python -m flake8 . --exclude=.venv,__pycache__,.mypy_cache,llm_sdk, tests
 	uv run python -m mypy . --warn-return-any --warn-unused-ignores \
 	--ignore-missing-imports --disallow-untyped-defs \
-	--check-untyped-defs --exclude '(.venv|llm_sdk)'
+	--check-untyped-defs --exclude '(.venv|llm_sdk|tests)'
 
 lint-strict:
 	uv run python -m flake8 . --exclude=.venv,__pycache__,.mypy_cache,llm_sdk

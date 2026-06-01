@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 
 class ParameterDefinition(BaseModel):
-    type: Literal["string", "number", "boolean"]
+    type: Literal["string", "number"]
 
 
 class FunctionDefinition(BaseModel):

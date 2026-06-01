@@ -12,7 +12,6 @@ class Validator:
             return obj.model_dump()
 
         except Exception as e:
-            # NEVER crash (assignment requirement)
             return {
                 "prompt": prompt,
                 "name": name,
