@@ -42,4 +42,4 @@ lint-strict:
 	uv run python -m mypy . --strict --follow-imports=skip \
 	--exclude '(.venv|llm_sdk|tests)'
 
-.PHONY: install run debug clean lint lint-strict
+.PHONY: install run run-edge debug clean lint lint-strict
