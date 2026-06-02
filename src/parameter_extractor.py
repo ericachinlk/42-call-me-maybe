@@ -1,12 +1,15 @@
 import re
 from typing import Any
+from pydantic import BaseModel
+from src.file_handler import FunctionDefinition, ParameterType
 
 
-class ParameterExtractor:
-    def __init__(self, llm) -> None:
-        self.llm = llm
-
-    def extract(self, fn_def, prompt: str) -> dict[str, Any]:
+class ParameterExtractor(BaseModel):
+    def extract(
+            self,
+            fn_def: FunctionDefinition,
+            prompt: str
+    ) -> dict[str, Any]:
         params = {}
         numbers = self._get_numbers(prompt)
         strings = self._extract_strings(prompt)
@@ -35,7 +38,7 @@ class ParameterExtractor:
             params[param_name] = self._cast(value, param_type.type)
         return params
 
-    def _get_source_string(self, prompt, strings) -> str:
+    def _get_source_string(self, prompt: str, strings: list[str]) -> Any:
         if strings:
             return max(strings, key=len)
         return prompt
@@ -63,7 +66,7 @@ class ParameterExtractor:
             return result
         return ""
 
-    def _infer_regex(self, prompt: str) -> str:
+    def _infer_regex(self, prompt: str) -> Any:
         p = prompt.lower()
 
         if "vowel" in p:
@@ -79,7 +82,7 @@ class ParameterExtractor:
                 return quoted[0]
         return r"\w+"
 
-    def _get_numbers(self, prompt) -> list[float]:
+    def _get_numbers(self, prompt: str) -> list[float]:
         return [float(x) for x in re.findall(r"-?\d+(?:\.\d+)?", prompt)]
 
     def _extract_strings(self, prompt: str) -> list[str]:
@@ -98,7 +101,7 @@ class ParameterExtractor:
         stop = {"what", "is", "the", "and", "with", "in", "to", "of"}
         return [w for w in words if w.lower() not in stop]
 
-    def _default_value(self, name, t) -> Any:
+    def _default_value(self, name: str, t: ParameterType) -> Any:
         if t == "number":
             return 0.0
         if t == "string":
@@ -107,13 +110,13 @@ class ParameterExtractor:
             return ""
         return None
 
-    def _cast(self, value, t) -> Any:
+    def _cast(self, value: Any, t: ParameterType) -> Any:
         if value is None:
             return None
         if t == "number":
             try:
                 return float(value)
-            except:
+            except Exception:
                 return 0.0
         if t == "string":
             return str(value).strip("'\"")

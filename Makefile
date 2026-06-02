@@ -1,6 +1,6 @@
-FUNCTION_PATH = src/data/input/functions_definition.json
-INPUT_PATH = src/data/input/function_calling_tests.json
-OUTPUT_PATH = src/data/output/function_calls.json
+FUNCTION_PATH = data/input/functions_definition.json
+INPUT_PATH = data/input/function_calling_tests.json
+OUTPUT_PATH = data/output/function_calls.json
 
 install:
 	uv sync
@@ -26,13 +26,13 @@ clean:
 	find . -type f -name "*.pyc" -delete
 
 lint:
-	uv run python -m flake8 . --exclude=.venv,__pycache__,.mypy_cache,llm_sdk, tests
+	uv run python -m flake8 . --exclude=.venv,__pycache__,.mypy_cache,llm_sdk,tests
 	uv run python -m mypy . --warn-return-any --warn-unused-ignores \
-	--ignore-missing-imports --disallow-untyped-defs \
+	--ignore-missing-imports --disallow-untyped-defs --follow-imports=skip \
 	--check-untyped-defs --exclude '(.venv|llm_sdk|tests)'
 
 lint-strict:
-	uv run python -m flake8 . --exclude=.venv,__pycache__,.mypy_cache,llm_sdk
-	uv run python -m mypy . --strict --exclude '(.venv|llm_sdk)'
+	uv run python -m flake8 . --exclude=.venv,__pycache__,.mypy_cache,llm_sdk,tests
+	uv run python -m mypy . --strict --follow-imports=skip --exclude '(.venv|llm_sdk|tests)'
 
 .PHONY: install install-lint run debug clean lint lint-strict

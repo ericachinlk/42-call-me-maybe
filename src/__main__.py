@@ -9,47 +9,60 @@ import argparse
 
 def parse_args() -> Any:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--functions_definition", required=True)
-    parser.add_argument("--input", required=True)
-    parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--functions_definition",
+        default="data/input/functions_definition.json")
+    parser.add_argument(
+        "--input",
+        default="data/input/functions_calling_tests.json")
+    parser.add_argument("--output", default="data/output/function_calls.json")
     return parser.parse_args()
 
 
 def main() -> None:
-    args = parse_args()
-    if not Path(args.input).exists():
-        raise FileNotFoundError(args.input)
-    functions = load_functions(args.functions_definition)
-    prompts = load_input(args.input)
-    llm = LLMEngine()
+    try:
+        args = parse_args()
+        functions = load_functions(args.functions_definition)
+        prompts = load_input(args.input)
+        llm = LLMEngine()
 
-    fn_map = {f.name: f for f in functions}
-    extractor = ParameterExtractor(llm)
-    selector = FunctionSelector(llm, functions)
+        fn_map = {f.name: f for f in functions}
+        extractor = ParameterExtractor()
+        selector = FunctionSelector(llm=llm, functions=functions)
 
-    results = []
-    for prompt in prompts:
-        print("=" * 60)
-        print("Prompt:", prompt)
+        results = []
+        for prompt in prompts:
+            fn_name = selector.select(prompt)
 
-        fn_name = selector.select(prompt)
-        print("Selected Function:", fn_name)
+            if fn_name not in fn_map:
+                raise ValueError(
+                    f"LLM hallucinated an invalid function name: '{fn_name}'. "
+                    f"Available choices are: {list(fn_map.keys())}"
+                )
 
-        fn_def = fn_map[fn_name]
-        params = extractor.extract(fn_def, prompt)
-        print("Parameters:", params)
+            fn_def = fn_map[fn_name]
+            params = extractor.extract(fn_def, prompt)
+            results.append(
+                {
+                    "prompt": prompt,
+                    "name": fn_name,
+                    "parameters": params,
+                }
+            )
 
-        results.append(
-            {
-                "prompt": prompt,
-                "name": fn_name,
-                "parameters": params,
-            }
-        )
+            # debugging prints
+            print("=" * 60)
+            print("Prompt:", prompt)
+            print("Selected Function:", fn_name)
+            print("Parameters:", params)
 
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    save_output(args.output, results)
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        save_output(args.output, results)
+
+    except (FileNotFoundError, OSError, ValueError) as e:
+        print("Pipeline Error:", e)
+        exit(1)
 
 
 if __name__ == "__main__":

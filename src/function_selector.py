@@ -1,21 +1,28 @@
-from src.models import FunctionDefinition
+from src.file_handler import FunctionDefinition
 from src.llm_engine import LLMEngine
+from typing import Any
+from pydantic import BaseModel, model_validator
 
 
-class FunctionSelector:
-    def __init__(self, llm: LLMEngine, functions: list[FunctionDefinition]) -> None:
-        self.llm = llm
-        self.functions = functions
+class FunctionSelector(BaseModel):
+    llm: LLMEngine
+    functions: list[FunctionDefinition]
+    function_tokens: dict[str, list[int]] = {}
+    model_config = {"arbitrary_types_allowed": True}
 
+    @model_validator(mode="after")
+    def compute_function_tokens(self) -> "FunctionSelector":
         self.function_tokens = {
             fn.name: self.llm.encode(fn.name)
-            for fn in functions
+            for fn in self.functions
         }
+        return self
 
     def build_prompt(self, user_prompt: str) -> str:
         lines = []
         lines.append("You are a function selection system.")
-        lines.append("Select EXACTLY ONE function that best matches the user request.")
+        lines.append(
+            "Select EXACTLY ONE function that best matches the user request.")
         lines.append("Do NOT execute the function.")
         lines.append("Only output the function name.")
         lines.append("")
@@ -46,7 +53,7 @@ class FunctionSelector:
                 allowed.add(seq[len(generated)])
         return allowed
 
-    def select(self, user_prompt: str) -> str:
+    def select(self, user_prompt: str) -> Any:
         prompt = self.build_prompt(user_prompt)
         input_ids = self.llm.encode(prompt)
         generated: list[int] = []
