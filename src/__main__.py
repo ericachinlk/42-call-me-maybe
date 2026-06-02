@@ -5,6 +5,7 @@ from src.parameter_extractor import ParameterExtractor
 from pathlib import Path
 from typing import Any
 import argparse
+import time
 
 
 def parse_args() -> Any:
@@ -22,6 +23,8 @@ def parse_args() -> Any:
 def main() -> None:
     try:
         args = parse_args()
+        pipeline_start = time.perf_counter()
+
         functions = load_functions(args.functions_definition)
         prompts = load_input(args.input)
         llm = LLMEngine()
@@ -59,6 +62,11 @@ def main() -> None:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         save_output(args.output, results)
+
+        total_duration = (time.perf_counter() - pipeline_start) / 60
+        print("=" * 60)
+        print("Pipeline Completed successfully!")
+        print(f"Total Execution Time: {total_duration:.2f} minutes")
 
     except (FileNotFoundError, OSError, ValueError) as e:
         print("Pipeline Error:", e)

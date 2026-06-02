@@ -1,4 +1,4 @@
-from src.file_handler import FunctionDefinition
+from src.models import FunctionDefinition
 from src.llm_engine import LLMEngine
 from typing import Any
 from pydantic import BaseModel, model_validator

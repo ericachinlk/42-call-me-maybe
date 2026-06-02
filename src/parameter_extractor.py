@@ -1,7 +1,7 @@
 import re
 from typing import Any
 from pydantic import BaseModel
-from src.file_handler import FunctionDefinition, ParameterType
+from src.models import FunctionDefinition, ParameterType
 
 
 class ParameterExtractor(BaseModel):
