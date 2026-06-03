@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Any
 import argparse
 import time
+import os
+
+DEBUG = os.getenv("DEBUG") == "1"
 
 
 def parse_args() -> Any:
@@ -53,19 +56,19 @@ def main() -> None:
                 }
             )
 
-            # debugging prints
-            print("=" * 60)
-            print("Prompt:", prompt)
-            print("Selected Function:", fn_name)
-            print("Parameters:", params)
+            if DEBUG:
+                print("=" * 60)
+                print("Prompt:", prompt)
+                print("Selected Function:", fn_name)
+                print("Parameters:", params)
+                breakpoint()
 
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         save_output(args.output, results)
 
         total_duration = (time.perf_counter() - pipeline_start) / 60
-        print("=" * 60)
-        print("Pipeline Completed successfully!")
+        print("\nPipeline Completed successfully!")
         print(f"Total Execution Time: {total_duration:.2f} minutes")
 
     except (FileNotFoundError, OSError, ValueError) as e:

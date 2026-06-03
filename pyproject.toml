@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 
 dependencies = [
-    "pydantic",
+    "pydantic>=2",
     "mypy",
     "flake8",
     "llm-sdk",
@@ -17,3 +17,13 @@ members = ["llm_sdk"]
 
 [tool.uv.sources]
 llm-sdk = { workspace = true }
+
+[[tool.mypy.overrides]]
+module = "llm_sdk.*"
+ignore_missing_imports = true
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "llm_sdk"
+ignore_missing_imports = true
+follow_imports = "skip"

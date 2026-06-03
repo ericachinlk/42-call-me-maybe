@@ -9,3 +9,6 @@ export UV_CACHE_DIR=/tmp/uv-cache
 export UV_PROJECT_ENVIRONMENT=/tmp/call-me-maybe-venv
 
 uv sync
+
+First execution may take longer due to model download and initialization.
+Subsequent runs are significantly faster due to caching.
