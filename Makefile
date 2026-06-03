@@ -1,8 +1,6 @@
 FUNCTION_PATH = data/input/functions_definition.json
 INPUT_PATH = data/input/function_calling_tests.json
 OUTPUT_PATH = data/output/function_calls.json
-EDGE_CASE_INPUT = data/input/edge_cases_tests.json
-EDGE_CASE_OUTPUT = data/output/edge_cases_function_calls.json
 
 install:
 	uv sync
@@ -12,11 +10,6 @@ run:
 		--functions_definition $(FUNCTION_PATH) \
 		--input $(INPUT_PATH) \
 		--output $(OUTPUT_PATH)
-
-run-edge:
-	uv run python -m src \
-		--input $(EDGE_CASE_INPUT) \
-		--output $(EDGE_CASE_OUTPUT)
 
 debug:
 	DEBUG=1 uv run python -m src \
@@ -42,4 +35,4 @@ lint-strict:
 	uv run python -m mypy . --strict --follow-imports=skip \
 	--exclude '(.venv|llm_sdk|tests)'
 
-.PHONY: install run run-edge debug clean lint lint-strict
+.PHONY: install run debug clean lint lint-strict

@@ -1,22 +1,20 @@
 from src.models import FunctionDefinition
 from src.llm_engine import LLMEngine
 from typing import Any
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, PrivateAttr
 
 
 class FunctionSelector(BaseModel):
     llm: LLMEngine
     functions: list[FunctionDefinition]
-    function_tokens: dict[str, list[int]] = {}
+    _function_tokens: dict[str, list[int]] = PrivateAttr()
     model_config = {"arbitrary_types_allowed": True}
 
-    @model_validator(mode="after")
-    def compute_function_tokens(self) -> "FunctionSelector":
-        self.function_tokens = {
+    def model_post_init(self, __context: Any) -> None:
+        self._function_tokens = {
             fn.name: self.llm.encode(fn.name)
             for fn in self.functions
         }
-        return self
 
     def build_prompt(self, user_prompt: str) -> str:
         lines = []
@@ -46,7 +44,7 @@ class FunctionSelector(BaseModel):
 
     def _allowed_tokens(self, generated: list[int]) -> set[int]:
         allowed = set()
-        for seq in self.function_tokens.values():
+        for seq in self._function_tokens.values():
             if len(seq) <= len(generated):
                 continue
             if seq[: len(generated)] == generated:
@@ -67,6 +65,6 @@ class FunctionSelector(BaseModel):
             next_token = max(range(len(logits)), key=lambda x: logits[x])
             generated.append(next_token)
 
-            for fn_name, seq in self.function_tokens.items():
+            for fn_name, seq in self._function_tokens.items():
                 if generated == seq:
                     return fn_name
