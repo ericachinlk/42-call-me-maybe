@@ -98,10 +98,10 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "flake8" },
+    { name = "flake8", specifier = ">=7.0.0" },
     { name = "llm-sdk", editable = "llm_sdk" },
-    { name = "mypy" },
-    { name = "pydantic" },
+    { name = "mypy", specifier = ">=1.11.0" },
+    { name = "pydantic", specifier = ">=2,<3" },
 ]
 
 [[package]]

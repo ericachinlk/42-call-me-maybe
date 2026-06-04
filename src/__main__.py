@@ -1,4 +1,5 @@
-from src.file_handler import load_functions, load_input, save_output
+from src.file_handler import (
+    load_functions, load_input, save_output, PipelineError)
 from src.llm_engine import LLMEngine
 from src.function_selector import FunctionSelector
 from src.parameter_extractor import ParameterExtractor
@@ -41,7 +42,7 @@ def main() -> None:
             fn_name = selector.select(prompt)
 
             if fn_name not in fn_map:
-                raise ValueError(
+                raise PipelineError(
                     f"LLM hallucinated an invalid function name: '{fn_name}'. "
                     f"Available choices are: {list(fn_map.keys())}"
                 )
@@ -71,9 +72,9 @@ def main() -> None:
         print("\nPipeline Completed successfully!")
         print(f"Total Execution Time: {total_duration:.2f} minutes")
 
-    except (FileNotFoundError, OSError, ValueError) as e:
+    except PipelineError as e:
         print("Pipeline Error:", e)
-        exit(1)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
