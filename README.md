@@ -16,6 +16,7 @@ make install / uv sync
 make clean
 rm -rf /tmp/uv-cache
 rm -rf /tmp/call-me-maybe-venv
+these should be removed after reboot
 
 First execution may take longer due to model download and initialization.
 Subsequent runs are significantly faster due to caching.

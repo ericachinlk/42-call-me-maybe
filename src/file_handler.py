@@ -1,11 +1,8 @@
 import json
 from typing import Any
 from src.models import FunctionDefinition, TestPrompt, FunctionCallOutput
+from src.validator import PipelineError
 from pydantic import ValidationError
-
-
-class PipelineError(Exception):
-    pass
 
 
 def format_validation_errors(e: ValidationError) -> str:
