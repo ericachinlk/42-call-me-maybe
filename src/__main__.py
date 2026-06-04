@@ -1,7 +1,8 @@
 from src.file_handler import load_functions, load_input, save_output
 from src.llm_engine import LLMEngine
 from src.function_selector import FunctionSelector
-from src.parameter_extractor import ParameterExtractor
+# from src.parameter_extractor import ParameterExtractor
+from src.parameter_extractor_constrained import ParameterExtractorConstrained
 from src.validator import validate_parameters, PipelineError
 from pathlib import Path
 from typing import Any
@@ -19,7 +20,7 @@ def parse_args() -> Any:
         default="data/input/functions_definition.json")
     parser.add_argument(
         "--input",
-        default="data/input/functions_calling_tests.json")
+        default="data/input/function_calling_tests.json")
     parser.add_argument("--output", default="data/output/function_calls.json")
     return parser.parse_args()
 
@@ -34,7 +35,7 @@ def main() -> None:
         llm = LLMEngine()
 
         fn_map = {f.name: f for f in functions}
-        extractor = ParameterExtractor()
+        extractor = ParameterExtractorConstrained()
         selector = FunctionSelector(llm=llm, functions=functions)
 
         results = []
@@ -48,7 +49,7 @@ def main() -> None:
                 )
 
             fn_def = fn_map[fn_name]
-            params = extractor.extract(fn_def, prompt)
+            params = extractor.extract(fn_def, prompt, llm)
             validate_parameters(fn_def, params)
             results.append(
                 {
