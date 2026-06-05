@@ -35,7 +35,7 @@ def main() -> None:
         llm = LLMEngine()
 
         fn_map = {f.name: f for f in functions}
-        extractor = ParameterExtractorConstrained()
+        extractor = ParameterExtractorConstrained(llm=llm)
         selector = FunctionSelector(llm=llm, functions=functions)
 
         results = []
@@ -49,7 +49,7 @@ def main() -> None:
                 )
 
             fn_def = fn_map[fn_name]
-            params = extractor.extract(fn_def, prompt, llm)
+            params = extractor.extract(fn_def, prompt)
             validate_parameters(fn_def, params)
             results.append(
                 {

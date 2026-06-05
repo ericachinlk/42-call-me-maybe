@@ -1,132 +1,250 @@
+from typing import Any
 import json
-from typing import Any, Set
-from pydantic import BaseModel
+import re
+from pydantic import BaseModel, PrivateAttr
 from src.models import FunctionDefinition, ParameterType
 from src.llm_engine import LLMEngine
 
 
 class ParameterExtractorConstrained(BaseModel):
+    llm: LLMEngine
+    _token_to_id: dict[str, int] = PrivateAttr()
+    _id_to_token: dict[int, str] = PrivateAttr()
+    _number_tokens: set[int] = PrivateAttr()
+    _boolean_tokens: set[int] = PrivateAttr()
+    _letter_tokens: set[int] = PrivateAttr()
+    _digit_tokens: set[int] = PrivateAttr()
+    _whitespace_tokens: set[int] = PrivateAttr()
+    _all_tokens: set[int] = PrivateAttr()
     model_config = {"arbitrary_types_allowed": True}
 
-    def build_prompt(self, fn_def: FunctionDefinition, user_prompt: str) -> str:
-        lines = [
-            "You are a structured data extraction system.",
-            f"Extract parameters for '{fn_def.name}':",
-        ]
-        for param_name, param in fn_def.parameters.items():
-            lines.append(f"  - {param_name}: {param.type.value}")
-        lines.extend([
-            "",
-            f"User request: {user_prompt}",
-            "",
-            "Respond ONLY with a minified JSON object containing the exact parameters:",
-            ""
-        ])
-        return "\n".join(lines)
-
-    def extract(self, fn_def: FunctionDefinition, user_prompt: str, llm: LLMEngine) -> dict[str, Any]:
-        # 1. Load Vocab and cache token categories once per execution
-        vocab_path = llm.model.get_path_to_vocab_file()
+    def model_post_init(self, __context: Any) -> None:
+        vocab_path = self.llm.model.get_path_to_vocab_file()
         with open(vocab_path, "r", encoding="utf-8") as f:
             vocab: dict[str, int] = json.load(f)
+
+        self._token_to_id = vocab
+        self._id_to_token = {v: k for k, v in vocab.items()}
+        self._number_tokens = set()
+        self._boolean_tokens = set()
+        self._letter_tokens = set()
+        self._digit_tokens = set()
+        self._whitespace_tokens = set()
+        self._all_tokens = set(vocab.values())
+
+        for token_str, token_id in vocab.items():
+            clean_token = token_str.replace("Ġ", "").strip().lower()
+
+            # Skip empty or special tokens
+            if not clean_token or "eos" in clean_token or "end" in clean_token:
+                continue
+
+            # Categorize by token type
+            if clean_token in ["true", "false"]:
+                self._boolean_tokens.add(token_id)
+            elif self._is_pure_number(clean_token):
+                self._number_tokens.add(token_id)
+            elif clean_token in [" ", "\n", "\r", "\t"] or (len(clean_token) <= 2 and all(c in " \n\r\t" for c in token_str)):
+                self._whitespace_tokens.add(token_id)
+            elif any(c.isdigit() for c in clean_token) and all(c in "0123456789.-" for c in clean_token):
+                self._digit_tokens.add(token_id)
+            elif any(c.isalpha() for c in clean_token):
+                self._letter_tokens.add(token_id)
+
+    def _is_pure_number(self, t: str) -> bool:
+        """Check if token is a pure number (no decimal, just digits)"""
+        if not t:
+            return False
+        return all(c in "0123456789.-" for c in t) and any(c.isdigit() for c in t)
+
+    def extract(
+        self,
+        fn_def: FunctionDefinition,
+        user_prompt: str,
+    ) -> dict[str, Any]:
+        """Extract parameters using constrained decoding"""
+        result: dict[str, Any] = {}
+        for param_name, param_def in fn_def.parameters.items():
+            extracted_value = self._extract_parameter(
+                user_prompt=user_prompt,
+                param_name=param_name,
+                param_type=param_def.type,
+            )
+            result[param_name] = extracted_value
+        return result
+
+    def _extract_parameter(
+        self,
+        user_prompt: str,
+        param_name: str,
+        param_type: ParameterType,
+    ) -> Any:
+        """Extract a single parameter with schema-aware constrained generation"""
         
-        token_to_str = {token_id: text for text, token_id in vocab.items()}
-        all_token_ids = set(token_to_str.keys())
+        # Build the extraction prompt
+        extraction_prompt = (
+            "Extract the value exactly from the user request. Do not calculate or invent.\n"
+            f"User request: {user_prompt}\n"
+            f"Parameter name: {param_name}\n"
+            f"Parameter type: {param_type.value}\n"
+            "Value: "
+        )
 
-        # Pre-group tokens cleanly by their raw textual content
-        open_brace_tokens = set()
-        close_brace_tokens = set()
-        comma_tokens = set()
-        number_tokens = set()
-        boolean_tokens = set()
-
-        for tid, tstr in token_to_str.items():
-            # Clean up tokenizer-specific artifacts (like Qwen's byte representations or spaces)
-            clean_tstr = tstr.replace("Ġ", " ").replace(" ", " ").strip()
-            
-            if "{" in tstr: open_brace_tokens.add(tid)
-            if "}" in tstr: close_brace_tokens.add(tid)
-            if "," in tstr: comma_tokens.add(tid)
-            if any(c.isdigit() or c in ".-" for c in clean_tstr): number_tokens.add(tid)
-            if any(w in clean_tstr.lower() for w in ["true", "false", "t", "f"]): boolean_tokens.add(tid)
-
-        # 2. Setup Generation Context
-        prompt_str = self.build_prompt(fn_def, user_prompt)
-        input_ids = llm.encode(prompt_str)
+        input_ids = self.llm.encode(extraction_prompt)
         generated_tokens: list[int] = []
-        params_list = list(fn_def.parameters.items())
-        
-        # Hard cap the total tokens to prevent a runaway 5+ minute infinite loop
-        MAX_GENERATION_TOKENS = 64
 
-        # 3. Fast Dynamic Constrained Generation Loop
-        for _ in range(MAX_GENERATION_TOKENS):
-            # Only decode the full string when absolutely necessary to evaluate states
-            current_generated_str = llm.decode(generated_tokens)
-            cleaned = current_generated_str.strip()
+        # Determine generation limits based on type
+        max_tokens = self._get_max_tokens(param_type)
+        allowed_tokens = self._get_allowed_tokens_for_type(param_type)
+
+        for step in range(max_tokens):
+            # Get logits from the model
+            logits = self.llm.logits(input_ids + generated_tokens)
+
+            # Apply schema-aware masking
+            masked_logits = self._mask_logits(logits, allowed_tokens, param_type, generated_tokens)
+
+            # Select the highest-scoring valid token
+            next_token = max(range(len(masked_logits)), key=lambda x: masked_logits[x])
+
+            # Check if we hit a stopping condition
+            if masked_logits[next_token] == float("-inf"):
+                break
+
+            # Decode and check stopping conditions
+            token_str = self.llm.decode([next_token])
             
-            logits = llm.logits(input_ids + generated_tokens)
-            allowed: Set[int] = set()
+            if self._should_stop_before_adding(token_str, param_type):
+                break
 
-            if not cleaned:
-                allowed = open_brace_tokens
-            else:
-                # Count how many commas or keys have been completed to find current parameter index
-                current_param_idx = cleaned.count(":") - 1
-                if current_param_idx < 0:
-                    current_param_idx = 0
-
-                if current_param_idx >= len(params_list):
-                    allowed = close_brace_tokens
-                else:
-                    param_name, param_def = params_list[current_param_idx]
-                    expected_key = f'"{param_name}"'
-
-                    if expected_key not in cleaned:
-                        # Match structural fragments building up to the JSON key name
-                        allowed = {tid for tid, tstr in token_to_str.items() 
-                                   if param_name in tstr or '"' in tstr or "{" in tstr or "," in tstr}
-                    elif ":" not in cleaned.split(expected_key)[-1]:
-                        # Force a colon after the key name string
-                        allowed = {tid for tid, tstr in token_to_str.items() if ":" in tstr}
-                    else:
-                        # Actively parsing the actual variable data type
-                        if param_def.type == ParameterType.number:
-                            allowed = number_tokens | comma_tokens | close_brace_tokens
-                        elif param_def.type == ParameterType.boolean:
-                            allowed = boolean_tokens | comma_tokens | close_brace_tokens
-                        elif param_def.type == ParameterType.string:
-                            # Inside string quotes: allow anything until the closing structural comma or brace
-                            val_part = cleaned.split(":")[-1].strip()
-                            quote_count = val_part.count('"')
-                            if quote_count % 2 == 1:
-                                allowed = all_token_ids  # Safe zone: inside string literals
-                            else:
-                                allowed = comma_tokens | close_brace_tokens
-
-            # Apply structural logit mask
-            if not allowed:
-                allowed = all_token_ids
-
-            for token_id in range(len(logits)):
-                if token_id not in allowed:
-                    logits[token_id] = float("-inf")
-
-            # Choose the token with highest probability score
-            next_token = max(range(len(logits)), key=lambda x: logits[x])
             generated_tokens.append(next_token)
+            
+            if self._should_stop_after_adding(generated_tokens, param_type):
+                break
 
-            # Fast evaluation check to see if valid JSON structure is closed
-            final_str = llm.decode(generated_tokens).strip()
-            if final_str.endswith("}"):
-                try:
-                    parsed_json = json.loads(final_str)
-                    if all(k in parsed_json for k, _ in params_list):
-                        return parsed_json
-                except json.JSONDecodeError:
-                    pass
+        # Decode and parse the result
+        extracted_text = self.llm.decode(generated_tokens).strip()
+        return self._parse_value(extracted_text, param_type)
 
-        # Fallback Strategy: If constrained loop hits MAX_GENERATION_TOKENS without completing,
-        # return a default compliant payload to prevent program execution crashes
-        return {param_name: (0.0 if param_def.type == ParameterType.number else "") 
-                for param_name, param_def in params_list}
+    def _get_max_tokens(self, param_type: ParameterType) -> int:
+        """Determine maximum tokens to generate based on type"""
+        if param_type == ParameterType.number:
+            return 4  # e.g., "-123.5" ~ 2-4 tokens
+        elif param_type == ParameterType.boolean:
+            return 2  # "true" or "false" ~ 1-2 tokens
+        else:  # string
+            return 8  # reasonable for names and short strings
+
+    def _get_allowed_tokens_for_type(self, param_type: ParameterType) -> set[int]:
+        """Get the set of allowed tokens based on parameter type"""
+        if param_type == ParameterType.number:
+            # Allow both number tokens (multi-digit) and digit tokens (single)
+            return self._digit_tokens.union(self._number_tokens)
+
+        elif param_type == ParameterType.boolean:
+            # Allow only true/false tokens
+            return self._boolean_tokens
+
+        else:  # string
+            # Allow letters and whitespace, but NOT numbers
+            return self._letter_tokens.union(self._whitespace_tokens)
+
+    def _mask_logits(
+        self,
+        logits: list[float],
+        allowed_tokens: set[int],
+        param_type: ParameterType,
+        generated_tokens: list[int],
+    ) -> list[float]:
+        """Apply schema-aware masking to logits"""
+        masked = [float("-inf")] * len(logits)
+
+        if not allowed_tokens:
+            return masked
+
+        # Apply base type constraints
+        for token_id in allowed_tokens:
+            if token_id < len(masked):
+                masked[token_id] = logits[token_id]
+
+        return masked
+
+    def _should_stop_before_adding(self, token_str: str, param_type: ParameterType) -> bool:
+        """Check if we should stop before adding this token (structural barriers)"""
+        # Stop on structural markers
+        if any(c in token_str for c in ["\n", "\r", "}", "]", ","]):
+            return True
+        return False
+
+    def _should_stop_after_adding(self, generated_tokens: list[int], param_type: ParameterType) -> bool:
+        """Check if we should stop after adding the token"""
+        current_text = self.llm.decode(generated_tokens).strip()
+        
+        if not current_text:
+            return False
+
+        # For numbers, stop when we have a complete number
+        if param_type == ParameterType.number:
+            if re.match(r"^-?\d+(\.\d+)?$", current_text) and not current_text.endswith('.'):
+                return True
+
+        # For booleans, stop after getting true or false
+        if param_type == ParameterType.boolean:
+            if current_text.lower() in ["true", "false"]:
+                return True
+
+        # For strings, stop on whitespace after having content
+        if param_type == ParameterType.string:
+            if current_text and current_text[-1].isspace():
+                return True
+
+        return False
+
+    def _should_stop_generation(
+        self,
+        token_str: str,
+        param_type: ParameterType,
+        generated_tokens: list[int],
+    ) -> bool:
+        """Determine if generation should stop (DEPRECATED - use the two separate functions)"""
+        
+        # Stop on structural markers
+        if any(c in token_str for c in ["\n", "\r", "}", "]", ","]):
+            return True
+
+        # For numbers, stop when we have a complete number
+        if param_type == ParameterType.number:
+            current_text = self.llm.decode(generated_tokens).strip()
+            # Check if it's a valid complete number
+            if re.match(r"^-?\d+(\.\d+)?$", current_text) and not current_text.endswith('.'):
+                return True
+
+        # For booleans, stop after getting true or false
+        if param_type == ParameterType.boolean:
+            current_text = self.llm.decode(generated_tokens).strip().lower()
+            if current_text in ["true", "false"]:
+                return True
+
+        # For strings, stop on common delimiters
+        if param_type == ParameterType.string:
+            if token_str.strip() == "":  # whitespace
+                return len(generated_tokens) > 0  # stop if we already have content
+
+        return False
+
+    def _parse_value(self, text: str, param_type: ParameterType) -> Any:
+        """Parse extracted text into the correct Python type"""
+        text = text.strip()
+
+        if param_type == ParameterType.number:
+            # Extract the first valid number
+            match = re.search(r"-?\d+(\.\d+)?", text)
+            return float(match.group()) if match else 0.0
+
+        elif param_type == ParameterType.boolean:
+            # Check if text contains "true"
+            return "true" in text.lower()
+
+        else:  # string
+            # Return the text as-is, removing quotes if present
+            return text.strip().strip('"').strip("'")
