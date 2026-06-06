@@ -1,8 +1,8 @@
 from src.file_handler import load_functions, load_input, save_output
 from src.llm_engine import LLMEngine
 from src.function_selector import FunctionSelector
-# from src.parameter_extractor import ParameterExtractor
-from src.parameter_extractor_constrained import ParameterExtractorConstrained
+from src.parameter_extractor import ParameterExtractor
+# from src.parameter_extractor_constrained import ParameterExtractorConstrained
 from src.validator import validate_parameters, PipelineError
 from pathlib import Path
 from typing import Any
@@ -35,7 +35,7 @@ def main() -> None:
         llm = LLMEngine()
 
         fn_map = {f.name: f for f in functions}
-        extractor = ParameterExtractorConstrained(llm=llm)
+        extractor = ParameterExtractor(llm=llm)
         selector = FunctionSelector(llm=llm, functions=functions)
 
         results = []
@@ -59,12 +59,12 @@ def main() -> None:
                 }
             )
 
-            if DEBUG:
-                print("=" * 60)
-                print("Prompt:", prompt)
-                print("Selected Function:", fn_name)
-                print("Parameters:", params)
-                breakpoint()
+            # if DEBUG:
+            print("=" * 60)
+            print("Prompt:", prompt)
+            print("Selected Function:", fn_name)
+            print("Parameters:", params)
+            # breakpoint()
 
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
