@@ -9,8 +9,14 @@ from typing import Any
 import argparse
 import time
 import os
+import threading
 
 DEBUG = os.getenv("DEBUG") == "1"
+
+
+def force_exit() -> None:
+    print("\nTimeout exceeded (5 minutes).")
+    os._exit(1)
 
 
 def parse_args() -> Any:
@@ -80,4 +86,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    timer = threading.Timer(300, force_exit)
+    timer.start()
+
+    try:
+        main()
+    finally:
+        timer.cancel()
