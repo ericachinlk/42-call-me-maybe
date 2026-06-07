@@ -41,8 +41,8 @@ def load_functions(path: str) -> list[FunctionDefinition]:
     return result
 
 
-def load_input(path: str) -> list[str]:
-    result: list[str] = []
+def load_input(path: str) -> list[TestPrompt]:
+    result: list[TestPrompt] = []
     try:
         with open(path, "r", encoding="utf-8") as f:
             raw = json.load(f)
@@ -59,7 +59,7 @@ def load_input(path: str) -> list[str]:
     try:
         for item in raw:
             test = TestPrompt.model_validate(item)
-            result.append(test.prompt)
+            result.append(test)
     except ValidationError as e:
         raise PipelineError(
             "Invalid input file:\n" + format_validation_errors(e))

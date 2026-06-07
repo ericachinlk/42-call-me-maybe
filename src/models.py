@@ -1,6 +1,6 @@
 from enum import Enum
 from typing import Any
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class ParameterType(str, Enum):
@@ -18,7 +18,14 @@ class FunctionDefinition(BaseModel):
     description: str
     parameters: dict[str, ParameterDefinition]
     returns: ParameterDefinition
+    full_definition: str
 
+    @model_validator(mode="before")
+    @classmethod
+    def capture_raw_string(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data["full_definition"] = str(data) 
+        return data
 
 class TestPrompt(BaseModel):
     prompt: str

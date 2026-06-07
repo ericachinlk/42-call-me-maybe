@@ -1,4 +1,4 @@
-from src.models import FunctionDefinition
+from src.models import FunctionDefinition, TestPrompt
 from src.llm_engine import LLMEngine
 from typing import Any
 from pydantic import BaseModel, PrivateAttr
@@ -16,7 +16,7 @@ class FunctionSelector(BaseModel):
             for fn in self.functions
         }
 
-    def build_prompt(self, user_prompt: str) -> str:
+    def build_prompt(self, user_prompt: TestPrompt) -> str:
         lines = []
         lines.append("You are a function selection system.")
         lines.append(
@@ -51,7 +51,7 @@ class FunctionSelector(BaseModel):
                 allowed.add(seq[len(generated)])
         return allowed
 
-    def select(self, user_prompt: str) -> Any:
+    def select(self, user_prompt: TestPrompt) -> Any:
         prompt = self.build_prompt(user_prompt)
         input_ids = self.llm.encode(prompt)
         generated: list[int] = []
