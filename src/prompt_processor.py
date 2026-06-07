@@ -4,38 +4,9 @@ from src.validator import validate_parameters, PipelineError
 from src.llm_engine import LLMEngine
 from src.models import FunctionDefinition, TestPrompt, ParameterType
 import re
-import json
 import os
 
 DEBUG = os.getenv("DEBUG") == "1"
-_VOCAB_CACHE = None
-
-
-def _get_vocab_mapping(llm) -> dict:
-    """Loads and normalizes the model vocabulary file from disk exactly once."""
-    global _VOCAB_CACHE
-    if _VOCAB_CACHE is None:
-        vocab_path = llm.model.get_path_to_vocab_file()
-        with open(vocab_path, 'r', encoding='utf-8') as f:
-            vocab_data = json.load(f)
-        
-        # Standardize vocabulary format to { token_id: clean_string }
-        raw_cache = {}
-        first_key = next(iter(vocab_data.keys()))
-        if isinstance(vocab_data[first_key], (int, float)):
-            raw_cache = {int(v): k for k, v in vocab_data.items()}
-        else:
-            raw_cache = {int(k): v for k, v in vocab_data.items()}
-            
-        # NLP Normalization: Clean up tokenizer artifacts (like Ġ or  ) 
-        # so that text matching works flawlessly across spaces.
-        _VOCAB_CACHE = {}
-        for tid, tstr in raw_cache.items():
-            if tstr:
-                cleaned = tstr.replace('Ġ', ' ').replace(' ', ' ').replace('╚', '')
-                _VOCAB_CACHE[tid] = cleaned
-                
-    return _VOCAB_CACHE
 
 
 class PromptProcessor(BaseModel):
@@ -71,6 +42,8 @@ class PromptProcessor(BaseModel):
 
             results.append(output_node)
             print(output_node)
+            if DEBUG:
+                breakpoint()
 
         return results
 
@@ -90,7 +63,6 @@ class PromptProcessor(BaseModel):
                 f"To resolve the prompt, \"{prompt_item.prompt}\"."
             )
 
-            # FIXED: Changed running_prefix= back to previous_tokens=
             for token in self.llm.next_multiple_tokens(
                 prompt_message=prompt_payload, 
                 previous_tokens=running_prefix
@@ -189,57 +161,60 @@ class PromptProcessor(BaseModel):
                     active_param = param
                     break
 
-        # 2. GENERALIZED HEURISTIC TARGET EXTRACTION
+        # Cleanly pull out text within matched quote pairs, ignoring escaped text mid-sentence
+        quotes = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"|\'([^\'\\]*(?:\\.[^\'\\]*)*)\'', prompt_item.prompt)
+        quotes = [q[0] or q[1] for q in quotes if (q[0] or q[1]) and (q[0] or q[1]) != prompt_item.prompt]
+
+        # 2. INTENT-BASED SEMANTIC EXTRACTION
         target_value = ""
-        quotes = re.findall(r'["\'](.*?)["\']', prompt_item.prompt)
-        is_regex_mode = False
         
-        if active_param == "name":
-            target_value = quotes[0] if quotes else prompt_item.prompt.split()[-1].strip("' \".")
-            
-        elif active_param in ("source_string", "text", "string", "input", "s"):
-            if "in " in prompt_item.prompt:
-                parts = prompt_item.prompt.split("in ")
-                sub_quotes = re.findall(r'["\'](.*?)["\']', parts[-1])
-                if sub_quotes:
-                    target_value = sub_quotes[0]
-            if not target_value and quotes:
+        if active_param in ("source_string", "text", "string", "input", "s"):
+            # Target the block of text being operated on (usually the longest quoted block)
+            if quotes:
                 target_value = max(quotes, key=len)
-                
+            if not target_value or target_value in ("*", "NUMBERS"):
+                # Regex backup lookup for text sandwiched after "in"
+                in_match = re.search(r'\bin\b\s*["\']?([^"\']{5,})', prompt_item.prompt, re.IGNORECASE)
+                if in_match:
+                    target_value = in_match.group(1).strip()
+
         elif active_param in ("regex", "pattern", "search_term", "target"):
             if "number" in prompt_lower or "digit" in prompt_lower:
                 target_value = r"\d+"
-                is_regex_mode = True
             elif "vowel" in prompt_lower:
-                target_value = "vowels"  
-                is_regex_mode = True
-            elif "word " in prompt_lower:
-                word_part = prompt_item.prompt.split("word")[-1]
-                word_quotes = re.findall(r'["\'](.*?)["\']', word_part)
-                if word_quotes:
-                    target_value = word_quotes[0]
-            elif len(quotes) >= 2:
-                target_value = quotes[0]
+                target_value = "[aeiouAEIOU]"
             elif quotes:
-                target_value = quotes[0]
-                
-        elif active_param in ("replacement", "replace_with", "value"):
-            if "with " in prompt_item.prompt:
-                right_of_with = prompt_item.prompt.split("with")[-1].strip()
-                with_quotes = re.findall(r'["\'](.*?)["\']', right_of_with)
-                if with_quotes:
-                    target_value = with_quotes[0]
-                elif "asterisk" in right_of_with.lower():
-                    target_value = "*"
-                else:
-                    target_value = right_of_with.split()[0].strip("' \".")
-            elif len(quotes) >= 2:
-                target_value = quotes[1]
+                # For words, find the first short quote that isn't the replacement text
+                filtered_quotes = [q for q in quotes if q not in ("*", "NUMBERS") and len(q) < len(max(quotes, key=len))]
+                if filtered_quotes:
+                    target_value = filtered_quotes[0]
 
+        elif active_param in ("replacement", "replace_with", "value"):
+            # Look explicitly for what follows the keyword "with"
+            with_match = re.search(r'\bwith\b\s*["\']?(\w+|\*)', prompt_lower)
+            if with_match:
+                matched_val = with_match.group(1)
+                if matched_val == "asterisks" or matched_val == "*":
+                    target_value = "*"
+                elif matched_val == "numbers":
+                    target_value = "NUMBERS"
+                else:
+                    # Match case with the original prompt string
+                    orig_match = re.search(r'\bwith\b\s*["\']?([^"\s\']*)', prompt_item.prompt, re.IGNORECASE)
+                    if orig_match:
+                        target_value = orig_match.group(1).strip("'\"")
+            if not target_value and len(quotes) >= 2:
+                target_value = quotes[1]
+                
+        elif active_param == "name":
+            # Grabs the exact text snippet from the user prompt to guarantee original casing match
+            target_value = quotes[0] if quotes else prompt_item.prompt.split()[-1].strip("' \".")
+
+        # Final safety catch-all fallback
         if not target_value and quotes:
             target_value = max(quotes, key=len)
 
-        # 3. HIGH-SPEED CONSTRAINED GENERATION (Via Native Engine Stream)
+        # 3. HIGH-SPEED CONSTRAINED GENERATION
         base_prompt = (
             f"System: You are a strict parameter extraction system.\n"
             f"User Request: \"{prompt_item.prompt}\"\n"
@@ -248,36 +223,24 @@ class PromptProcessor(BaseModel):
         )
 
         token_accumulator = ''
-        vowel_pattern = re.compile(r'^([aeiouAEIOU\s]+|\[aeiouAEIOU\])$')
         
-        # We leverage the fast internal generator loop 
         while True:
-            current_previous = context_history + token_accumulator
+            current_clean = token_accumulator.strip("'\" ")
             chosen_token = None
+            remaining_target = target_value[len(current_clean):] if target_value else ""
             
-            # Request token options directly from the fast internal KV-cached generator
-            for token_str in self.llm.next_multiple_tokens(prompt_message=base_prompt, previous_tokens=current_previous):
+            for token_str in self.llm.next_multiple_tokens(prompt_message=base_prompt, previous_tokens=context_history + token_accumulator):
                 clean_token = token_str.replace('Ġ', ' ').replace(' ', ' ').replace('╚', '')
                 
-                # Apply structural mask matching rules directly to the stream 
-                if is_regex_mode:
-                    if target_value == r"\d+":
-                        if clean_token.strip() and not clean_token.strip().isdigit():
-                            continue  # Masked out
-                    elif target_value == "vowels":
-                        if clean_token.strip() and not vowel_pattern.match(clean_token.strip()):
-                            continue  # Masked out
-                else:
-                    if target_value:
-                        current_clean = token_accumulator.strip("'\" ")
-                        remaining_target = target_value[len(current_clean):]
-                        
-                        if clean_token.strip():
-                            # If token doesn't align safely with the target window, mask it out
-                            if not (remaining_target.strip().startswith(clean_token.strip()) or clean_token.strip().startswith(remaining_target.strip())):
-                                continue
+                if target_value and clean_token.strip():
+                    # Case-insensitive stream sequence alignment rules 
+                    # This safely guides the generator down the correct sequence without proper noun token locks
+                    remaining_lower = remaining_target.strip().lower()
+                    clean_lower = clean_token.strip().lower()
+                    
+                    if not (remaining_lower.startswith(clean_lower) or clean_lower.startswith(remaining_lower)):
+                        continue
                 
-                # Valid token option identified, accept it
                 chosen_token = token_str
                 break
                 
@@ -290,8 +253,13 @@ class PromptProcessor(BaseModel):
 
             token_accumulator += chosen_token
 
-            # Structural termination guard
-            if not is_regex_mode and target_value and len(token_accumulator.strip("'\" ")) >= len(target_value):
+            if target_value and len(token_accumulator.strip("'\" ")) >= len(target_value):
                 break
 
-        return token_accumulator.strip("'\" ")
+        final_str = token_accumulator.strip("'\" ")
+        
+        # Enforce exact structural target casing matching upon clean stream termination
+        if target_value and final_str.lower() == target_value.lower():
+            return target_value
+            
+        return final_str
