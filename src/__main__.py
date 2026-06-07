@@ -29,7 +29,8 @@ def main() -> None:
         prompts = load_input(args.input)
         llm = LLMEngine()
 
-        processor = PromptProcessor(prompts=prompts, functions_definition=functions, llm=llm)
+        processor = PromptProcessor(
+            prompts=prompts, functions_definition=functions, llm=llm)
         results = processor.process()
 
         output_path = Path(args.output)

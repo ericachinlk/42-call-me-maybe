@@ -24,7 +24,7 @@ class PromptProcessor(BaseModel):
         fn_map = {f.name: f for f in self.functions_definition}
 
         for prompt_item in self.prompts:
-            output_node = {}
+            output_node: dict[str, Any] = {}
             output_node['prompt'] = prompt_item.prompt
 
             fn_name = self._identify_function_name(prompt_item)
@@ -64,11 +64,11 @@ class PromptProcessor(BaseModel):
             )
 
             for token in self.llm.next_multiple_tokens(
-                prompt_message=prompt_payload, 
+                prompt_message=prompt_payload,
                 previous_tokens=running_prefix
             ):
                 matched_functions = [
-                    fn for fn in candidates 
+                    fn for fn in candidates
                     if fn['name'].startswith(running_prefix + token)
                 ]
 
@@ -79,12 +79,16 @@ class PromptProcessor(BaseModel):
                     candidates = matched_functions
                     break
 
-    def _extract_parameters(self, prompt_item: TestPrompt, function_name: str) -> dict[str, Any]:
+    def _extract_parameters(
+            self,
+            prompt_item: TestPrompt,
+            function_name: str
+    ) -> dict[str, Any]:
         target_definition = next(
             fn for fn in self.functions_definition if fn.name == function_name
         )
 
-        parameter_payloads = {}
+        parameter_payloads: dict[str, Any] = {}
         context_history = ''
 
         for param_key, param_metadata in target_definition.parameters.items():
@@ -103,8 +107,13 @@ class PromptProcessor(BaseModel):
                 )
 
         return parameter_payloads
-    
-    def _generate_numeric_value(self, prompt_item: TestPrompt, function_def: FunctionDefinition, context_history: str) -> float:
+
+    def _generate_numeric_value(
+            self,
+            prompt_item: TestPrompt,
+            function_def: FunctionDefinition,
+            context_history: str
+    ) -> float:
         base_prompt = (
             f"Task: Extract the numeric value for the parameter.\n"
             f"User Prompt: \"{prompt_item.prompt}\"\n"
@@ -117,7 +126,7 @@ class PromptProcessor(BaseModel):
 
         while True:
             for token in self.llm.next_multiple_tokens(
-                prompt_message=base_prompt, 
+                prompt_message=base_prompt,
                 previous_tokens=context_history + token_accumulator
             ):
                 if token == '':
@@ -125,16 +134,23 @@ class PromptProcessor(BaseModel):
                         return float(token_accumulator)
                     except ValueError:
                         token_accumulator = ''
-                
-                clean_token = token.replace('Ġ', '').replace(' ', '').replace('╚', '')
+
+                clean_token = token.replace(
+                    'Ġ', '').replace(' ', '').replace('╚', '')
                 if any(char not in allowed_chars for char in clean_token):
                     continue
 
                 combined_preview = token_accumulator + clean_token
-                if combined_preview.count('.') >= 2 or combined_preview.count('-') >= 2:
+                if (
+                    combined_preview.count('.') >= 2
+                    or combined_preview.count('-') >= 2
+                ):
                     continue
 
-                if combined_preview.count('-') == 1 and combined_preview[0] != '-':
+                if (
+                    combined_preview.count('-') == 1
+                    and combined_preview[0] != '-'
+                ):
                     continue
 
                 token_accumulator += clean_token
@@ -147,8 +163,13 @@ class PromptProcessor(BaseModel):
                     except ValueError:
                         token_accumulator = ''
                 break
-    
-    def _generate_string_value(self, prompt_item: TestPrompt, function_def: FunctionDefinition, context_history: str) -> str:
+
+    def _generate_string_value(
+            self,
+            prompt_item: TestPrompt,
+            function_def: FunctionDefinition,
+            context_history: str
+    ) -> str:
         prompt_lower = prompt_item.prompt.lower()
 
         # 1. DYNAMIC PARAMETER DETECTION
@@ -162,20 +183,27 @@ class PromptProcessor(BaseModel):
                     active_param = param
                     break
 
-        # Cleanly pull out text within matched quote pairs, ignoring escaped text mid-sentence
-        quotes = re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"|\'([^\'\\]*(?:\\.[^\'\\]*)*)\'', prompt_item.prompt)
-        quotes = [q[0] or q[1] for q in quotes if (q[0] or q[1]) and (q[0] or q[1]) != prompt_item.prompt]
+        # Cleanly pull out text within matched quote pairs
+        quotes = re.findall(
+            r'"([^"\\]*(?:\\.[^"\\]*)*)"|\'([^\'\\]*(?:\\.[^\'\\]*)*)\'',
+            prompt_item.prompt)
+        quotes = [
+            q[0] or q[1]
+            for q in quotes
+            if (q[0] or q[1]) and (q[0] or q[1]) != prompt_item.prompt]
 
         # 2. INTENT-BASED SEMANTIC EXTRACTION
         target_value = ""
-        
+
         if active_param in ("source_string", "text", "string", "input", "s"):
-            # Target the block of text being operated on (usually the longest quoted block)
+            # Target the block of text being operated on
             if quotes:
                 target_value = max(quotes, key=len)
             if not target_value or target_value in ("*", "NUMBERS"):
                 # Regex backup lookup for text sandwiched after "in"
-                in_match = re.search(r'\bin\b\s*["\']?([^"\']{5,})', prompt_item.prompt, re.IGNORECASE)
+                in_match = re.search(
+                    r'\bin\b\s*["\']?([^"\']{5,})',
+                    prompt_item.prompt, re.IGNORECASE)
                 if in_match:
                     target_value = in_match.group(1).strip()
 
@@ -185,8 +213,12 @@ class PromptProcessor(BaseModel):
             elif "vowel" in prompt_lower:
                 target_value = "[aeiouAEIOU]"
             elif quotes:
-                # For words, find the first short quote that isn't the replacement text
-                filtered_quotes = [q for q in quotes if q not in ("*", "NUMBERS") and len(q) < len(max(quotes, key=len))]
+                # find the first short quote that isn't the replacement text
+                filtered_quotes = [
+                    q
+                    for q in quotes
+                    if (q not in ("*", "NUMBERS")
+                        and len(q) < len(max(quotes, key=len)))]
                 if filtered_quotes:
                     target_value = filtered_quotes[0]
 
@@ -201,15 +233,20 @@ class PromptProcessor(BaseModel):
                     target_value = "NUMBERS"
                 else:
                     # Match case with the original prompt string
-                    orig_match = re.search(r'\bwith\b\s*["\']?([^"\s\']*)', prompt_item.prompt, re.IGNORECASE)
+                    orig_match = re.search(
+                        r'\bwith\b\s*["\']?([^"\s\']*)',
+                        prompt_item.prompt, re.IGNORECASE)
                     if orig_match:
                         target_value = orig_match.group(1).strip("'\"")
             if not target_value and len(quotes) >= 2:
                 target_value = quotes[1]
-                
+
         elif active_param == "name":
-            # Grabs the exact text snippet from the user prompt to guarantee original casing match
-            target_value = quotes[0] if quotes else prompt_item.prompt.split()[-1].strip("' \".")
+            # Grabs the exact text snippet from the user prompt
+            if quotes:
+                target_value = quotes[0]
+            else:
+                target_value = prompt_item.prompt.split()[-1].strip("' \".")
 
         # Final safety catch-all fallback
         if not target_value and quotes:
@@ -224,27 +261,36 @@ class PromptProcessor(BaseModel):
         )
 
         token_accumulator = ''
-        
+
         while True:
             current_clean = token_accumulator.strip("'\" ")
             chosen_token = None
-            remaining_target = target_value[len(current_clean):] if target_value else ""
-            
-            for token_str in self.llm.next_multiple_tokens(prompt_message=base_prompt, previous_tokens=context_history + token_accumulator):
-                clean_token = token_str.replace('Ġ', ' ').replace(' ', ' ').replace('╚', '')
-                
+            if target_value:
+                remaining_target = target_value[len(current_clean):]
+            else:
+                remaining_target = ""
+
+            tokens = self.llm.next_multiple_tokens(
+                prompt_message=base_prompt,
+                previous_tokens=context_history + token_accumulator)
+            for token_str in tokens:
+                clean_token = token_str.replace(
+                    'Ġ', ' ').replace(' ', ' ').replace('╚', '')
+
                 if target_value and clean_token.strip():
-                    # Case-insensitive stream sequence alignment rules 
-                    # This safely guides the generator down the correct sequence without proper noun token locks
+                    # Case-insensitive stream sequence alignment rules
                     remaining_lower = remaining_target.strip().lower()
                     clean_lower = clean_token.strip().lower()
-                    
-                    if not (remaining_lower.startswith(clean_lower) or clean_lower.startswith(remaining_lower)):
+
+                    if not (
+                        remaining_lower.startswith(clean_lower)
+                        or clean_lower.startswith(remaining_lower)
+                    ):
                         continue
-                
+
                 chosen_token = token_str
                 break
-                
+
             if not chosen_token:
                 break
 
@@ -254,13 +300,16 @@ class PromptProcessor(BaseModel):
 
             token_accumulator += chosen_token
 
-            if target_value and len(token_accumulator.strip("'\" ")) >= len(target_value):
+            if (
+                target_value
+                and len(token_accumulator.strip("'\" ")) >= len(target_value)
+            ):
                 break
 
         final_str = token_accumulator.strip("'\" ")
-        
-        # Enforce exact structural target casing matching upon clean stream termination
+
+        # Enforce exact structural target casing matching
         if target_value and final_str.lower() == target_value.lower():
             return target_value
-            
+
         return final_str

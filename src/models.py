@@ -24,7 +24,7 @@ class FunctionDefinition(BaseModel):
     @classmethod
     def capture_raw_string(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            data["full_definition"] = str(data) 
+            data["full_definition"] = str(data)
         return data
 
 

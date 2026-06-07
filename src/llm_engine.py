@@ -16,8 +16,11 @@ class LLMEngine(BaseModel):
         prompt = f"<|im_start|>user\n{prompt_message}<|im_end|>\n" + \
             f"<|im_start|>assistant\n<think>\n\n</think>\n\n{previous_tokens}"
         tensors = self.model.encode(prompt)
-        probabilities = self.model.get_logits_from_input_ids(tensors.tolist()[0])
-        sorted_indices = sorted(range(len(probabilities)), key=probabilities.__getitem__, reverse=True)
+        probabilities = self.model.get_logits_from_input_ids(
+            tensors.tolist()[0])
+        sorted_indices = sorted(
+            range(len(probabilities)),
+            key=probabilities.__getitem__, reverse=True)
 
         for idx in sorted_indices[skip:]:
             yield self.model.decode(idx)
