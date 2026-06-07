@@ -125,18 +125,19 @@ class PromptProcessor(BaseModel):
                         return float(token_accumulator)
                     except ValueError:
                         token_accumulator = ''
-
-                if any(char not in allowed_chars for char in token):
+                
+                clean_token = token.replace('Ġ', '').replace(' ', '').replace('╚', '')
+                if any(char not in allowed_chars for char in clean_token):
                     continue
 
-                combined_preview = token_accumulator + token
+                combined_preview = token_accumulator + clean_token
                 if combined_preview.count('.') >= 2 or combined_preview.count('-') >= 2:
                     continue
 
                 if combined_preview.count('-') == 1 and combined_preview[0] != '-':
                     continue
 
-                token_accumulator += token
+                token_accumulator += clean_token
                 if '\n' in token_accumulator:
                     token_accumulator = token_accumulator.split('\n')[0]
                     if token_accumulator is None:
