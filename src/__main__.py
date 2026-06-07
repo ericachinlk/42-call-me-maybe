@@ -1,22 +1,11 @@
 from src.file_handler import load_functions, load_input, save_output
 from src.llm_engine import LLMEngine
+from src.validator import PipelineError
 from src.prompt_processor import PromptProcessor
-# from src.function_selector import FunctionSelector
-# from src.parameter_extractor import ParameterExtractor
-from src.validator import validate_parameters, PipelineError
 from pathlib import Path
 from typing import Any
 import argparse
 import time
-import os
-# import threading
-
-DEBUG = os.getenv("DEBUG") == "1"
-
-
-# def force_exit() -> None:
-#     print("\nTimeout exceeded (5 minutes).")
-#     os._exit(1)
 
 
 def parse_args() -> Any:
@@ -40,40 +29,8 @@ def main() -> None:
         prompts = load_input(args.input)
         llm = LLMEngine()
 
-        fn_map = {f.name: f for f in functions}
         processor = PromptProcessor(prompts=prompts, functions_definition=functions, llm=llm)
         results = processor.process()
-        # selector = FunctionSelector(llm=llm, functions=functions)
-        # extractor = ParameterExtractor(llm=llm)
-
-        # results = []
-        # for prompt in prompts:
-        #     # fn_name, params = processor.process(prompt)
-        #     fn_name = selector.select(prompt)
-
-        #     if fn_name not in fn_map:
-        #         raise PipelineError(
-        #             f"LLM hallucinated an invalid function name: '{fn_name}'. "
-        #             f"Available choices are: {list(fn_map.keys())}"
-        #         )
-
-        #     fn_def = fn_map[fn_name]
-        #     params = extractor.extract(fn_def, prompt)
-        #     validate_parameters(fn_def, params)
-        #     results.append(
-        #         {
-        #             "prompt": prompt,
-        #             "name": fn_name,
-        #             "parameters": params,
-        #         }
-        #     )
-
-        #     # if DEBUG:
-        #     print("=" * 60)
-        #     print("Prompt:", prompt)
-        #     print("Selected Function:", fn_name)
-        #     print("Parameters:", params)
-        #     # breakpoint()
 
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,10 +47,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    # timer = threading.Timer(300, force_exit)
-    # timer.start()
-
-    # try:
-    #     main()
-    # finally:
-    #     timer.cancel()
