@@ -233,7 +233,7 @@ for i in range(len(logits)):
 
 - **Pydantic:** [v2 Documentation](https://docs.pydantic.dev/latest/concepts/models/)
 - **Logit Masking:** [Constrained Text Generation via Logit Masking](https://arxiv.org/abs/2108.13816)
-- **Inspiration:** [Campus 42 v1.2](https://github.com/sousampere/42_call_me_maybe_v1.2/)
+- **Inspiration:** [Other 42 Campus Cadet's Repo](https://github.com/sousampere/42_call_me_maybe_v1.2/)
 
 ## AI Usage Statement
 
