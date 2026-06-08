@@ -7,11 +7,10 @@
 
 Standard LLM function calling relies heavily on massive parameter counts or intensive fine-tuning to reliably output structured JSON. This project demonstrates how a compact, local model can achieve rigid, deterministic structural compliance and high schema accuracy by intercepting and filtering logits **at the token probability distribution level** — preventing invalid tokens from even being considered during generation.
 
-The application ingests a JSON file of function specifications alongside a list of user prompts, accurately resolves which function to call, extracts the required parameters, and guarantees type conformity via robust semantic parsing and Pydantic validation.
+The application ingests a JSON file of function specifications alongside a list of user prompts, accurately resolves which function to call, extracts the required parameters using constrained decoding, and guarantees type conformity via robust semantic parsing and Pydantic validation.
 
 ```
 User Prompt ──> [ Function Name Identification ] ──> [ Parameter Parsing State Machine ] ──> Pydantic Model ──> Validated JSON
-                 (post-sampling filtering)         (late logit masking)
 ```
 
 ---
@@ -49,18 +48,26 @@ The repository is modularly segregated to handle data validation, token inferenc
 ## Algorithm Explanation
 The application completely circumvents traditional auto-regressive randomness by combining **post-sampling filtering** for high-entropy decisions with **late logit masking** for structured outputs. This hybrid approach balances accuracy with performance.
 
-### 1. Prefix-Constrained Function Name Resolution
-Instead of allowing the LLM to output arbitrary text, `_identify_function_name` enforces a dynamic trie-like prefix search over the allowed list of function definitions:
-* The engine fetches the descending ordered logit choices for the next prospective token.
-* A candidate list filters function titles starting with `running_prefix + proposed_token`.
-* If a token invalidates all available options, it is systematically skipped (`continue`), preventing any possibility of out-of-bounds hallucination.
+### 1. Late-Masked Prefix-Constrained Function Name Resolution
+Instead of allowing the LLM to output arbitrary text, `_get_function_name` enforces a dynamic trie-like prefix search over the allowed list of function definitions:
+
+**Phase 1 (Free Generation):** 
+* The engine fetches the descending ordered logit choices for the next prospective token without constraints.
+* This allows natural semantic exploration while building the prefix.
+
+**Phase 2 (Logit Masking Activation):** 
+* Once the prefix reaches 3+ characters AND candidates narrow to ≤3 options, logit masking engages.
+* Only tokens representing valid next characters from remaining candidates are allowed at the logit level.
+* This prevents hallucination beyond function name boundaries while maintaining fast early-stage generation.
+
+**Termination:**
+* If a token invalidates all available options, it is systematically filtered out via masking.
 * Once the intersection narrows to a single unambiguous function name, generation stops instantly.
-* **Note:** This layer uses **post-sampling filtering** rather than logit masking to allow natural exploration of the token space when multiple function names share prefixes.
 
 ### 2. Late Logit Masking for Parameter Generation
 Once a function signature is selected, its parameters are resolved iteratively using a **late masking strategy**:
 
-#### Numeric Parameter Strategy (`_generate_numeric_value`)
+#### 2.1 Numeric Parameter Strategy (`_generate_numeric_value`)
 For types matching `ParameterType.number`:
 * **Phase 1 (Free Generation):** Initial tokens are generated without constraints, allowing the model natural expression.
 * **Phase 2 (Logit Masking Activation):** Once the first digit is detected (`len(stripped) >= 1`), logit masking engages.
@@ -68,12 +75,70 @@ For types matching `ParameterType.number`:
 * **Clean Termination:** The accumulator rejects structural anomalies (multiple decimals, misplaced negatives) and stops immediately upon encountering a newline or non-numeric token, ensuring fast, deterministic extraction.
 * **Performance Optimization:** Character-to-token-ID mappings are cached across parameters to avoid redundant model encoding operations.
 
-#### String/Regex Optimization (`_generate_string_value`)
+#### 2.2 String/Regex Optimization (`_generate_string_value`)
 For textual attributes:
 * **Phase 1 (Free Generation):** The model generates freely while building the string, leveraging semantic understanding.
 * **Phase 2 (Late Logit Masking):** Once within ~2 tokens of the target string length (`len(current) >= target_len - 2`), logit masking restricts output to only characters that appear in the remaining target string.
 * **Intent-Based Extraction:** The prompt parser scans for quoted blocks or targeted phrases anchored by keywords (`in`, `with`, etc.) to identify the semantic target.
 * **Case-Insensitive Alignment:** Token stream alignment checks remain case-insensitive to gracefully handle capitalization variations.
+
+### 3. Schema-Compliant Output via Pydantic Validation
+
+The pipeline ensures all outputs conform to strict schema definitions through **Pydantic validation**:
+
+**Data Flow:**
+```
+User Prompt
+    ↓
+[Constrained Function Name] ← Late logit masking
+    ↓
+[Constrained Parameters] ← Late logit masking
+    ↓
+Pydantic Model Validation ← Type enforcement & schema verification
+    ↓
+Dict Conversion ← model_dump()
+    ↓
+JSON Serialization ← Deterministic output format
+```
+
+**How Pydantic Guarantees Schema Compliance:**
+
+1. **Strict Type Validation:**
+   ```python
+   # In file_handler.py - save_output()
+   for item in results:
+       output = FunctionCallOutput.model_validate(item)
+       # Raises PipelineError if any field violates its type
+   ```
+   - Numeric parameters must be `float` or `int`
+   - String parameters must be `str`
+   - Function names must match defined signatures
+
+2. **Model Definition:**
+   ```python
+   # In src/models.py
+   class FunctionCallOutput(BaseModel):
+       prompt: str
+       name: str
+       parameters: dict[str, Any]
+   ```
+
+3. **JSON Serialization:**
+   ```python
+   json.dump(
+       [item.model_dump() for item in validated_res],
+       f,
+       indent=2,
+       ensure_ascii=False
+   )
+   ```
+   Once Pydantic validates, the output is guaranteed to serialize to valid JSON. The `model_dump()` method converts the validated model into a dictionary, which Python's `json` module serializes deterministically.
+
+**Result:** By coupling constrained LLM generation with strict Pydantic validation, the final JSON output is:
+- **Type-safe** — Every field conforms to its declared type
+- **Schema-compliant** — Structure matches `FunctionCallOutput` definition
+- **Deterministic** — No variability in serialization format
+- **Recoverable** — Invalid outputs fail fast with clear error messages
 
 ---
 
@@ -124,7 +189,7 @@ Token 4: "\n" (newline)   → Phase 2 (masked) → Stop, return 345.0
 * **Speed:** The late masking strategy drastically reduces computational overhead compared to token-by-token masking:
   - Phase 1 (free generation) runs at full model speed with no filtering overhead
   - Phase 2 (constrained) engages only when necessary
-  - Combined with local `mps`/`cuda` optimizations and cached token ID lookups, text decoding is highly efficient
+  - Combined with cached token ID lookups, text decoding is highly efficient
   - The system halts calculation immediately upon resolving boundaries (newlines, invalid tokens) rather than exhausting token limits
 * **Reliability:** The script functions predictably under high runtime variability. If an unknown structural failure occurs during processing, the execution cleanly maps structural anomalies back to user space via a custom `PipelineError`, keeping data output paths corruption-free.
 
@@ -200,7 +265,7 @@ Execute the full processing pipeline over the pre-configured test collections:
 make run
 ```
 
-> 💡 **Execution Note:** The **very first run** may take significantly longer because the framework must safely download and initialize the raw `Qwen/Qwen3-0.6B` model weights from the Hugging Face Hub. Subsequent runs are near-instantaneous due to local weight caching.
+> 💡 **Execution Note:** The **very first run** may take significantly longer because the framework must safely download and initialize the raw `Qwen/Qwen3-0.6B` model weights from the Hugging Face Hub. Subsequent runs are considerably faster due to local weight caching.
 
 ### Debugging Mode
 To spin up an interactive debugging session that steps through individual function call extraction frames using breakpoints:
@@ -245,7 +310,7 @@ uv run python -m src \
 {'prompt': "Substitute the word 'cat' with 'dog' in 'The cat sat on the mat with another cat'", 'name': 'fn_substitute_string_with_regex', 'parameters': {'source_string': 'The cat sat on the mat with another cat', 'regex': 'cat', 'replacement': 'dog'}}
 
 Pipeline Completed successfully!
-Total Execution Time: 2.97 minutes
+Total Execution Time: 2.64 minutes
 ```
 
 The resulting validated outputs are systematically serialized and saved directly into `data/output/function_calls.json`.

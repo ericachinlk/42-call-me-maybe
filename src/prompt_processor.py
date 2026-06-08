@@ -28,7 +28,7 @@ class PromptProcessor(BaseModel):
             output_node: dict[str, Any] = {}
             output_node['prompt'] = prompt_item.prompt
 
-            fn_name = self._identify_function_name(prompt_item)
+            fn_name = self._get_function_name(prompt_item)
             if fn_name not in fn_map:
                 raise PipelineError(
                     f"LLM hallucinated an invalid function name: '{fn_name}'. "
@@ -64,8 +64,12 @@ class PromptProcessor(BaseModel):
             valid_ids.update(self._char_to_token_ids[char])
         return valid_ids
 
-    def _identify_function_name(self, prompt_item: TestPrompt) -> str:
-        """Identify function name using post-sampling filtering."""
+    def _get_function_name(self, prompt_item: TestPrompt) -> str:
+        """Identify function name using late logit masking.
+
+        Phase 1: Generate until multiple candidates sharing a prefix.
+        Phase 2: Constrain to valid next characters from remaining candidates.
+        """
         candidates = self.get_summary_definitions()
         running_prefix = ''
 
@@ -75,9 +79,26 @@ class PromptProcessor(BaseModel):
                 f"To resolve the prompt, \"{prompt_item.prompt}\"."
             )
 
+            # Late masking: only activate once we've narrowed candidates
+            # and have sufficient prefix length (at least 3 chars)
+            use_masking = len(running_prefix) >= 3 and len(candidates) <= 3
+
+            valid_token_ids = None
+            if use_masking:
+                # Get valid next characters from the narrowed candidate list
+                next_chars = set()
+                for candidate in candidates:
+                    if len(candidate['name']) > len(running_prefix):
+                        next_chars.add(candidate['name'][len(running_prefix)])
+
+                if next_chars:
+                    valid_token_ids = self._get_valid_token_ids_cached(
+                        ''.join(next_chars))
+
             for token in self.llm.next_multiple_tokens(
                 prompt_message=prompt_payload,
-                previous_tokens=running_prefix
+                previous_tokens=running_prefix,
+                valid_token_ids=valid_token_ids
             ):
                 matched_functions = [
                     fn for fn in candidates
