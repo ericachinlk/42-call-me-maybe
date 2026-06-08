@@ -160,10 +160,8 @@ class PromptProcessor(BaseModel):
         valid_token_ids_full = self._get_valid_token_ids_cached(allowed_chars)
 
         while True:
-            current_stripped = token_accumulator.strip('-.\n ')
-
-            # Apply masking once we have a digit
-            use_masking = len(current_stripped) >= 1
+            # Apply immediate logit masking
+            use_masking = True
             valid_token_ids = valid_token_ids_full if use_masking else None
 
             for token in self.llm.next_multiple_tokens(
