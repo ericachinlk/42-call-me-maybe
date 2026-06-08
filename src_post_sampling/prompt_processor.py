@@ -14,7 +14,6 @@ class PromptProcessor(BaseModel):
     functions_definition: list[FunctionDefinition]
     llm: LLMEngine
     _total_prompts: int = PrivateAttr()
-    _char_to_token_ids: dict[str, set[int]] = PrivateAttr(default_factory=dict)
     model_config = {"arbitrary_types_allowed": True}
 
     def model_post_init(self, __context: Any) -> None:
@@ -54,18 +53,7 @@ class PromptProcessor(BaseModel):
             for fn in self.functions_definition
         ]
 
-    def _get_valid_token_ids_cached(self, allowed_chars: str) -> set[int]:
-        """Get token IDs for allowed characters with caching."""
-        valid_ids: set[int] = set()
-        for char in allowed_chars:
-            if char not in self._char_to_token_ids:
-                token_ids = self.llm.get_token_ids(char)
-                self._char_to_token_ids[char] = set(token_ids)
-            valid_ids.update(self._char_to_token_ids[char])
-        return valid_ids
-
     def _identify_function_name(self, prompt_item: TestPrompt) -> str:
-        """Identify function name using post-sampling filtering."""
         candidates = self.get_summary_definitions()
         running_prefix = ''
 
@@ -97,7 +85,8 @@ class PromptProcessor(BaseModel):
             function_name: str
     ) -> dict[str, Any]:
         target_definition = next(
-            fn for fn in self.functions_definition if fn.name == function_name)
+            fn for fn in self.functions_definition if fn.name == function_name
+        )
 
         parameter_payloads: dict[str, Any] = {}
         context_history = ''
@@ -134,44 +123,22 @@ class PromptProcessor(BaseModel):
 
         token_accumulator = ''
         allowed_chars = '-0123456789.\n'
-        valid_token_ids_full = self._get_valid_token_ids_cached(allowed_chars)
 
         while True:
-            current_stripped = token_accumulator.strip('-.\n ')
-
-            # Apply masking once we have a digit
-            use_masking = len(current_stripped) >= 1
-            valid_token_ids = valid_token_ids_full if use_masking else None
-
             for token in self.llm.next_multiple_tokens(
                 prompt_message=base_prompt,
-                previous_tokens=context_history + token_accumulator,
-                valid_token_ids=valid_token_ids
+                previous_tokens=context_history + token_accumulator
             ):
                 if token == '':
                     try:
-                        return float(token_accumulator.strip())
+                        return float(token_accumulator)
                     except ValueError:
-                        return 0.0
+                        token_accumulator = ''
 
                 clean_token = token.replace(
                     'Ġ', '').replace(' ', '').replace('╚', '')
-
-                # If we're masked and get non-numeric, we're done
-                if (
-                    use_masking
-                    and not clean_token.replace(
-                        '\n', '').replace('-', '').replace('.', '')):
-                    try:
-                        return float(token_accumulator.strip())
-                    except ValueError:
-                        return 0.0
-
                 if any(char not in allowed_chars for char in clean_token):
-                    try:
-                        return float(token_accumulator.strip())
-                    except ValueError:
-                        return 0.0
+                    continue
 
                 combined_preview = token_accumulator + clean_token
                 if (
@@ -187,15 +154,14 @@ class PromptProcessor(BaseModel):
                     continue
 
                 token_accumulator += clean_token
-
-                # Stop if we hit newline
                 if '\n' in token_accumulator:
                     token_accumulator = token_accumulator.split('\n')[0]
+                    if token_accumulator is None:
+                        continue
                     try:
-                        return float(token_accumulator.strip())
+                        return float(token_accumulator)
                     except ValueError:
-                        return 0.0
-
+                        token_accumulator = ''
                 break
 
     def _generate_string_value(
@@ -217,6 +183,7 @@ class PromptProcessor(BaseModel):
                     active_param = param
                     break
 
+        # Cleanly pull out text within matched quote pairs
         quotes = re.findall(
             r'"([^"\\]*(?:\\.[^"\\]*)*)"|\'([^\'\\]*(?:\\.[^\'\\]*)*)\'',
             prompt_item.prompt)
@@ -229,9 +196,11 @@ class PromptProcessor(BaseModel):
         target_value = ""
 
         if active_param in ("source_string", "text", "string", "input", "s"):
+            # Target the block of text being operated on
             if quotes:
                 target_value = max(quotes, key=len)
             if not target_value or target_value in ("*", "NUMBERS"):
+                # Regex backup lookup for text sandwiched after "in"
                 in_match = re.search(
                     r'\bin\b\s*["\']?([^"\']{5,})',
                     prompt_item.prompt, re.IGNORECASE)
@@ -244,6 +213,7 @@ class PromptProcessor(BaseModel):
             elif "vowel" in prompt_lower:
                 target_value = "[aeiouAEIOU]"
             elif quotes:
+                # find the first short quote that isn't the replacement text
                 filtered_quotes = [
                     q
                     for q in quotes
@@ -253,6 +223,7 @@ class PromptProcessor(BaseModel):
                     target_value = filtered_quotes[0]
 
         elif active_param in ("replacement", "replace_with", "value"):
+            # Look explicitly for what follows the keyword "with"
             with_match = re.search(r'\bwith\b\s*["\']?(\w+|\*)', prompt_lower)
             if with_match:
                 matched_val = with_match.group(1)
@@ -261,6 +232,7 @@ class PromptProcessor(BaseModel):
                 elif matched_val == "numbers":
                     target_value = "NUMBERS"
                 else:
+                    # Match case with the original prompt string
                     orig_match = re.search(
                         r'\bwith\b\s*["\']?([^"\s\']*)',
                         prompt_item.prompt, re.IGNORECASE)
@@ -270,15 +242,17 @@ class PromptProcessor(BaseModel):
                 target_value = quotes[1]
 
         elif active_param == "name":
+            # Grabs the exact text snippet from the user prompt
             if quotes:
                 target_value = quotes[0]
             else:
                 target_value = prompt_item.prompt.split()[-1].strip("' \".")
 
+        # Final safety catch-all fallback
         if not target_value and quotes:
             target_value = max(quotes, key=len)
 
-        # 3. HIGH-SPEED CONSTRAINED GENERATION with LATE LOGIT MASKING
+        # 3. HIGH-SPEED CONSTRAINED GENERATION
         base_prompt = (
             f"System: You are a strict parameter extraction system.\n"
             f"User Request: \"{prompt_item.prompt}\"\n"
@@ -294,29 +268,17 @@ class PromptProcessor(BaseModel):
             if target_value:
                 remaining_target = target_value[len(current_clean):]
             else:
-                target_value = ""
+                remaining_target = ""
 
-            # apply logit masking once near the end
-            use_masking = (
-                target_value
-                and len(current_clean) >= max(1, len(target_value) - 2)
-            )
-            valid_token_ids = None
-            if use_masking:
-                # Mask to only remaining characters in target
-                remaining_chars = set(remaining_target)
-                valid_token_ids = self._get_valid_token_ids_cached(
-                    ''.join(remaining_chars))
-
-            for token_str in self.llm.next_multiple_tokens(
+            tokens = self.llm.next_multiple_tokens(
                 prompt_message=base_prompt,
-                previous_tokens=context_history + token_accumulator,
-                valid_token_ids=valid_token_ids
-            ):
+                previous_tokens=context_history + token_accumulator)
+            for token_str in tokens:
                 clean_token = token_str.replace(
                     'Ġ', ' ').replace(' ', ' ').replace('╚', '')
 
                 if target_value and clean_token.strip():
+                    # Case-insensitive stream sequence alignment rules
                     remaining_lower = remaining_target.strip().lower()
                     clean_lower = clean_token.strip().lower()
 
@@ -346,6 +308,7 @@ class PromptProcessor(BaseModel):
 
         final_str = token_accumulator.strip("'\" ")
 
+        # Enforce exact structural target casing matching
         if target_value and final_str.lower() == target_value.lower():
             return target_value
 
