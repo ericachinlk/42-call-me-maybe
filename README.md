@@ -283,6 +283,7 @@ This reduces parameter extraction time by ~40-50% for pipelines with multiple nu
 * **Pydantic Validation Concepts:** [Pydantic v2 Integrity Verification Documentation](https://docs.pydantic.dev/latest/concepts/models/)
 * **Constrained Generation Paradigms:** [Transformers LogitsProcessor Reference Guide](https://huggingface.co/docs/transformers/internal/generation_utils)
 * **Token Logit Masking:** [OpenAI's Constrained Decoding Overview](https://github.com/openai/gpt-2#using-the-api)
+* **Algorithm inspiration:** [Other Campus 42 Cadet's Github Repository](https://github.com/sousampere/42_call_me_maybe_v1.2/)
 
 ---
 
