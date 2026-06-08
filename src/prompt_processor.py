@@ -65,10 +65,10 @@ class PromptProcessor(BaseModel):
         return valid_ids
 
     def _get_function_name(self, prompt_item: TestPrompt) -> str:
-        """Identify function name using late logit masking.
+        """Identify function name using late logit masking (only very late).
 
-        Phase 1: Generate until multiple candidates sharing a prefix.
-        Phase 2: Constrain to valid next characters from remaining candidates.
+        Phase 1: Post-sampling filtering until prefix is 5+ chars
+        Phase 2: True logit masking when candidates are very narrow (≤2)
         """
         candidates = self.get_summary_definitions()
         running_prefix = ''
@@ -79,13 +79,11 @@ class PromptProcessor(BaseModel):
                 f"To resolve the prompt, \"{prompt_item.prompt}\"."
             )
 
-            # Late masking: only activate once we've narrowed candidates
-            # and have sufficient prefix length (at least 3 chars)
-            use_masking = len(running_prefix) >= 3 and len(candidates) <= 3
+            # late logit masking
+            use_masking = len(running_prefix) >= 5 and len(candidates) <= 2
 
             valid_token_ids = None
             if use_masking:
-                # Get valid next characters from the narrowed candidate list
                 next_chars = set()
                 for candidate in candidates:
                     if len(candidate['name']) > len(running_prefix):
@@ -135,6 +133,10 @@ class PromptProcessor(BaseModel):
                 )
             elif param_metadata.type == ParameterType.number:
                 parameter_payloads[param_key] = self._generate_numeric_value(
+                    prompt_item, target_definition, context_history
+                )
+            elif param_metadata.type == ParameterType.boolean:
+                parameter_payloads[param_key] = self._generate_boolean_value(
                     prompt_item, target_definition, context_history
                 )
 
@@ -371,3 +373,89 @@ class PromptProcessor(BaseModel):
             return target_value
 
         return final_str
+
+    def _generate_boolean_value(
+            self,
+            prompt_item: TestPrompt,
+            function_def: FunctionDefinition,
+            context_history: str
+    ) -> bool:
+        """Extract boolean value using late logit masking.
+
+        Phase 1 (Free): Generate freely (true/false semantics)
+        Phase 2 (Masked): Once first char detected, mask to only boolean chars
+        """
+        base_prompt = (
+            f"Task: Extract the boolean value (true or false) "
+            f"for the parameter.\n"
+            f"User Prompt: \"{prompt_item.prompt}\"\n"
+            f"Function Definition: {function_def.full_definition}\n"
+            f"Provide only the boolean value: true or false"
+        )
+
+        token_accumulator = ''
+        allowed_chars = 'truefalse\n'
+        valid_token_ids_full = self._get_valid_token_ids_cached(
+            allowed_chars)
+
+        while True:
+            current_stripped = token_accumulator.strip('\n ').lower()
+
+            # Phase 1 (Free): Generate until we have first letter
+            # Phase 2 (Masked): Once we have 't' or 'f', apply masking
+            use_masking = len(current_stripped) >= 1
+            valid_token_ids = valid_token_ids_full if use_masking else None
+
+            for token in self.llm.next_multiple_tokens(
+                prompt_message=base_prompt,
+                previous_tokens=context_history + token_accumulator,
+                valid_token_ids=valid_token_ids
+            ):
+                if token == '':
+                    # Empty token - try to parse what we have
+                    try:
+                        parsed = current_stripped.lower()
+                        if parsed in ('true', 't', 'yes', '1'):
+                            return True
+                        elif parsed in ('false', 'f', 'no', '0'):
+                            return False
+                        else:
+                            return False  # Default fallback
+                    except ValueError:
+                        return False
+
+                clean_token = token.replace(
+                    'Ġ', '').replace(' ', '').replace('╚', '')
+
+                # Check for invalid characters (should be rare with masking)
+                if any(
+                    char.lower()
+                    not in allowed_chars
+                    for char in clean_token
+                ):
+                    # Non-boolean char - try to parse current accumulator
+                    parsed = current_stripped.lower()
+                    if parsed in ('true', 't', 'yes', '1'):
+                        return True
+                    elif parsed in ('false', 'f', 'no', '0'):
+                        return False
+                    else:
+                        return False
+
+                token_accumulator += clean_token
+
+                # Stop if we hit newline
+                if '\n' in token_accumulator:
+                    parsed = token_accumulator.split('\n')[0].strip().lower()
+                    if parsed in ('true', 't', 'yes', '1'):
+                        return True
+                    elif parsed in ('false', 'f', 'no', '0'):
+                        return False
+                    else:
+                        return False
+
+                # Early exit if we have complete boolean word
+                if current_stripped in ('true', 'false'):
+                    return current_stripped == 'true'
+
+                break

@@ -19,30 +19,39 @@ class LLMEngine(BaseModel):
             skip: int = 0,
             valid_token_ids: set[int] | list[int] | None = None
     ) -> Generator[str]:
-        """Generate tokens with optional logit-level masking."""
+        """Generate tokens with true logit masking.
+
+        Invalid tokens have logits set to -∞ before sampling,
+        preventing them from being selected at
+        the probability distribution level.
+        """
         prompt = f"<|im_start|>user\n{prompt_message}<|im_end|>\n" + \
             f"<|im_start|>assistant\n<think>\n\n</think>\n\n{previous_tokens}"
         tensors = self.model.encode(prompt)
-        probabilities = self.model.get_logits_from_input_ids(
-            tensors.tolist()[0])
+        logits = self.model.get_logits_from_input_ids(tensors.tolist()[0])
 
-        # Convert to set for O(1) lookup if needed
+        # Logit masking: Set invalid logits to -inf
         if valid_token_ids is not None:
             if not isinstance(valid_token_ids, set):
                 valid_set = set(valid_token_ids)
             else:
                 valid_set = valid_token_ids
-            sorted_indices = sorted(
-                (i for i in range(len(probabilities)) if i in valid_set),
-                key=probabilities.__getitem__,
-                reverse=True
-            )
-        else:
-            sorted_indices = sorted(
-                range(len(probabilities)),
-                key=probabilities.__getitem__,
-                reverse=True
-            )
 
-        for idx in sorted_indices[skip:]:
+            # Mask invalid tokens
+            for i in range(len(logits)):
+                if i not in valid_set:
+                    logits[i] = float('-inf')
+
+        # Sort by logits (highest first)
+        sorted_indices = sorted(
+            range(len(logits)),
+            key=lambda i: logits[i],
+            reverse=True
+        )
+
+        # Filter out -inf values (invalid tokens)
+        valid_indices = [
+            i for i in sorted_indices if logits[i] != float('-inf')]
+
+        for idx in valid_indices[skip:]:
             yield self.model.decode(idx)
