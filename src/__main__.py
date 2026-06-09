@@ -72,6 +72,7 @@ def main() -> None:
                 if state['parameters']:
                     print(f"  └─ Extracted Args: {state['parameters']}")
                 print("-" * 40)
+                print()
 
             except StopIteration as exc:
                 results = exc.value

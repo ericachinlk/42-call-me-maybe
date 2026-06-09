@@ -55,7 +55,10 @@ class PromptProcessor(BaseModel):
         results = []
         fn_map = {f.name: f for f in self.functions_definition}
 
-        for prompt_item in self.prompts:
+        for index, prompt_item in enumerate(self.prompts, start=1):
+            print(
+                f"--- Processing prompt {index} of "
+                f"{self._total_prompts} ---")
             output_node: dict[str, Any] = {
                 'prompt': prompt_item.prompt,
                 'name': None,
