@@ -257,7 +257,7 @@ for i in range(len(logits)):
 - **Constrained Decoding:** Andrew Docherty's [Deep dive into Constrained Generation](https://medium.com/@docherty/controlling-your-llm-deep-dive-into-constrained-generation-1e561c736a20) - an excellent breakdown on logit-level distribution manipulation.
 - **Pydantic Validation:** [Pydantic v2 Documentation](https://docs.pydantic.dev/latest/concepts/models/) - core reference for structural schema validation and model post-initialization hooks.
 - **Formatting Standards:** [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html) - reference for strict type-hinted docstring specifications.
-- **Inspiration:** [sousampere/42_call_me_maybe_v1.2](https://github.com/sousampere/42_call_me_maybe_v1.2/) - Inspired the token evaluation logic. Seeing how they sort raw model logits by probability to step through candidate tokens was the key breakthrough for eliminating performance bottlenecks and building my fast, custom filtering loops.
+- **Inspiration:** [sousampere/42_call_me_maybe_v1.2](https://github.com/sousampere/42_call_me_maybe_v1.2/) - Inspired the core token evaluation and parsing architecture. Adopting their structured chat prompt format (using `<|im_start|>` and `<|im_end|>` tags) and tracking generated context history (`previous_tokens`) provided the structural foundation for the pipeline. Furthermore, seeing how they sort raw model logits by probability to step through candidate tokens was the key breakthrough for eliminating performance bottlenecks and building my fast, custom filtering loops.
 
 ---
 
