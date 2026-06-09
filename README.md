@@ -6,13 +6,22 @@
 
 **call me maybe** is a lightweight function-calling pipeline implementing **hybrid constrained decoding** on a local 0.6B parameter language model (`Qwen/Qwen3-0.6B`).
 
-Rather than relying on massive models or fine-tuning, this project demonstrates how constrained generation at the logit level — combined with semantic understanding and structural validation — enables small models to reliably extract structured data with high accuracy.
+Rather than relying on massive models or fine-tuning, this project demonstrates how constrained generation at the logit level - combined with semantic understanding and structural validation - enables small models to reliably extract structured data with high accuracy.
 
 The pipeline ingests function specifications and user prompts, identifies the correct function, extracts parameters with guaranteed type safety, and outputs valid JSON.
 
 ```
 User Prompt ──> Function Name Selection ──> Parameter Extraction ──> Pydantic Validation ──> JSON Output
 ```
+
+---
+
+## Bonus Features
+
+Beyond the core mandatory parameters, this implementation features fully realized architecture extensions:
+
+* **Real-Time Generation Visualizer:** Implemented a decoupled streaming generator framework (`PromptProcessor.process()`). The terminal interface dynamically outputs state metrics and architectural telemetry snapshots at exact execution milestones.
+* **Multi-Model Architecture Support:** The processing engine has been decoupled from hardcoded models. Using a runtime parameter flag, the system dynamically routes text requests across chosen LLM context weights.
 
 ---
 
@@ -106,6 +115,7 @@ After constrained generation, Pydantic validates:
 
 ## Design Decisions
 
+- **Streaming Telemetry Model:** Using an iterative generator mechanism (`yield`), processing traces are broadcast out of the core pipeline into the presentation layer, separating algorithmic evaluation from standard console output.
 - **Hybrid constraints:** Different strategies for different types (discrete vs. structural vs. semantic)
 - **Immediate masking for numbers:** Tight structural constraints don't need exploration
 - **Late masking for strings:** Semantic understanding requires freedom, then lock down
@@ -182,7 +192,7 @@ make clean         # Clean cache
 
 ---
 
-## Example Usage
+## Example Usage & Visualizer Trace
 
 ```bash
 $ make run
@@ -190,15 +200,28 @@ uv run python -m src \
     --functions_definition data/input/functions_definition.json \
     --input data/input/function_calling_tests.json \
     --output data/output/function_calls.json
+Initializing LLM Engine with model context: Qwen3-0.6B
 
-{'prompt': 'What is the sum of 2 and 3?', 'name': 'fn_add_numbers', 'parameters': {'a': 2.0, 'b': 3.0}}
-{'prompt': 'What is the sum of 265 and 345?', 'name': 'fn_add_numbers', 'parameters': {'a': 265.0, 'b': 345.0}}
-{'prompt': "Reverse the string 'hello'", 'name': 'fn_reverse_string', 'parameters': {'s': 'hello'}}
-{'prompt': 'What is the square root of 16?', 'name': 'fn_get_square_root', 'parameters': {'a': 16.0}}
-{'prompt': 'Replace all vowels in \'Programming is fun\' with asterisks', 'name': 'fn_substitute_string_with_regex', 'parameters': {'source_string': 'Programming is fun', 'regex': '[aeiouAEIOU]', 'replacement': '*'}}
+🚀 Starting Function Calling Pipeline Visualizer...
+============================================================
+
+[Status]: 🔍 Identifying function name...
+  ├─ Prompt: "What is the sum of 2 and 3?"
+----------------------------------------
+
+[Status]: ⚙️ Extracting parameter constraints...
+  ├─ Prompt: "What is the sum of 2 and 3?"
+  ├─ Function Target: fn_add_numbers
+----------------------------------------
+
+[Status]: ✅ Schema validated successfully!
+  ├─ Prompt: "What is the sum of 2 and 3?"
+  ├─ Function Target: fn_add_numbers
+  └─ Extracted Args: {'a': 2.0, 'b': 3.0}
+----------------------------------------
 
 Pipeline Completed successfully!
-Total Execution Time: 1.32 minutes
+Total Execution Time: 0.26 minutes
 ```
 
 Output saved to `data/output/function_calls.json`.
@@ -231,12 +254,17 @@ for i in range(len(logits)):
 
 ## Resources
 
-- **Pydantic:** [v2 Documentation](https://docs.pydantic.dev/latest/concepts/models/)
-- **Logit Masking:** [Constrained Text Generation via Logit Masking](https://arxiv.org/abs/2108.13816)
-- **Inspiration:** [Other 42 Campus Cadet's Repo](https://github.com/sousampere/42_call_me_maybe_v1.2/)
+- **Constrained Decoding:** Andrew Docherty's [Deep dive into Constrained Generation](https://medium.com/@docherty/controlling-your-llm-deep-dive-into-constrained-generation-1e561c736a20) - an excellent breakdown on logit-level distribution manipulation.
+- **Pydantic Validation:** [Pydantic v2 Documentation](https://docs.pydantic.dev/latest/concepts/models/) - core reference for structural schema validation and model post-initialization hooks.
+- **Formatting Standards:** [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html) - reference for strict type-hinted docstring specifications.
+- **Inspiration:** [sousampere/42_call_me_maybe_v1.2](https://github.com/sousampere/42_call_me_maybe_v1.2/) - Inspired the token evaluation logic. Seeing how they sort raw model logits by probability to step through candidate tokens was the key breakthrough for eliminating performance bottlenecks and building my fast, custom filtering loops.
+
+---
 
 ## AI Usage Statement
 
-- **Pattern Optimization:** Regex refinement for robust substring matching
-- **Error Handling:** Pydantic validation mapping to clear error messages  
-- **Logit Masking Implementation:** Hybrid constraint design and token filtering pipeline optimization
+- **Architecture Refactoring:** Assisted in design patterns for a stateful generator stream to isolate core pipeline logic from visual display states.
+- **Logit Masking & Constraint Optimization:** Collaborated on refining hybrid token-filtering loops, specifically focusing on logit-sorting mechanics to eliminate decoding speed bottlenecks.
+- **Pattern Optimization:** Refined regular expressions for robust, context-aware substring matching during parameter extraction.
+- **Validation & Error Handling:** Mapped Pydantic structural validation schemas to explicit, user-friendly execution error messages.
+- **Technical Documentation:** Co-authored Google-style docstrings for architectural compliance and structured the comprehensive project README.
