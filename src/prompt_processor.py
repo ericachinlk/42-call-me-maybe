@@ -2,7 +2,7 @@
 Processes target prompts by managing state flow across LLM masking routines.
 """
 
-from typing import Any
+from typing import Any, Generator
 from pydantic import BaseModel, PrivateAttr
 from src.validator import validate_parameters, PipelineError
 from src.llm_engine import LLMEngine
@@ -38,25 +38,31 @@ class PromptProcessor(BaseModel):
         """
         self._total_prompts = len(self.prompts)
 
-    def process(self) -> list[dict[str, Any]]:
+    def process(self) -> Generator[dict[str, Any], None, list[dict[str, Any]]]:
         """
-        Process all loaded prompt statements sequentially
-        to build output models.
+        Process prompts dynamically, yielding the execution state
+        at key milestones.
+
+        Yields:
+            dict[str, Any]: A structural snapshot containing
+                the prompt context, identified function name,
+                extracted parameters, and structural pipeline state.
 
         Returns:
-            list[dict[str, Any]]: Validated parameters
-                combined with target names.
-
-        Raises:
-            PipelineError: If the LLM generates a function call name
-                not matching any valid predefined tool configuration.
+            list[dict[str, Any]]: The finalized list of all
+                processed function execution results.
         """
         results = []
         fn_map = {f.name: f for f in self.functions_definition}
 
         for prompt_item in self.prompts:
-            output_node: dict[str, Any] = {}
-            output_node['prompt'] = prompt_item.prompt
+            output_node: dict[str, Any] = {
+                'prompt': prompt_item.prompt,
+                'name': None,
+                'parameters': None,
+                'current_state': '🔍 Identifying function name...'
+            }
+            yield output_node
 
             fn_name = self._get_function_name(prompt_item)
             if fn_name not in fn_map:
@@ -64,15 +70,26 @@ class PromptProcessor(BaseModel):
                     f"LLM hallucinated an invalid function name: '{fn_name}'. "
                     f"Available choices are: {list(fn_map.keys())}"
                 )
+
             output_node['name'] = fn_name
+            output_node['current_state'] = (
+                '⚙️ Extracting parameter constraints...')
+            yield output_node
 
             extracted_params = self._extract_parameters(prompt_item, fn_name)
             fn_def = fn_map[fn_name]
             validate_parameters(fn_def, extracted_params)
-            output_node['parameters'] = extracted_params
 
-            results.append(output_node)
-            print(output_node)
+            output_node['parameters'] = extracted_params
+            output_node['current_state'] = '✅ Schema validated successfully!'
+            yield output_node
+
+            results.append({
+                'prompt': output_node['prompt'],
+                'name': output_node['name'],
+                'parameters': output_node['parameters']
+            })
+
             if DEBUG:
                 breakpoint()
 

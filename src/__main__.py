@@ -53,7 +53,29 @@ def main() -> None:
 
         processor = PromptProcessor(
             prompts=prompts, functions_definition=functions, llm=llm)
-        results = processor.process()
+
+        # Instantiate the generator stream
+        process_stream = processor.process()
+        results = []
+
+        print("\n🚀 Starting Function Calling Pipeline Visualizer...")
+        print("=" * 60)
+
+        while True:
+            try:
+                state = next(process_stream)
+
+                print(f"\n[Status]: {state['current_state']}")
+                print(f"  ├─ Prompt: \"{state['prompt']}\"")
+                if state['name']:
+                    print(f"  ├─ Function Target: {state['name']}")
+                if state['parameters']:
+                    print(f"  └─ Extracted Args: {state['parameters']}")
+                print("-" * 40)
+
+            except StopIteration as exc:
+                results = exc.value
+                break
 
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -64,7 +86,7 @@ def main() -> None:
         print(f"Total Execution Time: {total_duration:.2f} minutes")
 
     except PipelineError as e:
-        print("Pipeline Error:", e)
+        print("\nPipeline Error:", e)
         raise SystemExit(1)
 
 
