@@ -29,6 +29,7 @@ def parse_args() -> Any:
         "--input",
         default="data/input/function_calling_tests.json")
     parser.add_argument("--output", default="data/output/function_calls.json")
+    parser.add_argument("--model", default="Qwen3-0.6B")
     return parser.parse_args()
 
 
@@ -48,7 +49,7 @@ def main() -> None:
 
         functions = load_functions(args.functions_definition)
         prompts = load_input(args.input)
-        llm = LLMEngine()
+        llm = LLMEngine(model_name=args.model)
 
         processor = PromptProcessor(
             prompts=prompts, functions_definition=functions, llm=llm)

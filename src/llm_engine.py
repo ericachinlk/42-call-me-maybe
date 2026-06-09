@@ -5,19 +5,39 @@ for the core language model.
 
 from llm_sdk import Small_LLM_Model
 from typing import Generator, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class LLMEngine(BaseModel):
     """
     Execution engine interface interacting with
-    underlying language model architectures.
+    language model architectures.
 
     Attributes:
-        model: Tokenizer and logic tensor evaluation instance.
+        model_name (str): The configuration identifier or
+            choice variant for the underlying small language model.
+            Defaults to "Qwen3-0.6B".
+        model (Any): Tokenizer and logit tensor evaluation instance loaded
+            dynamically during initialization. Defaults to None.
     """
-    model: Small_LLM_Model = Field(default_factory=Small_LLM_Model)
+    model_name: str = "Qwen3-0.6B"
+    model: Any = None
     model_config = {"arbitrary_types_allowed": True}
+
+    def model_post_init(self, __context: Any) -> None:
+        """
+        Post-initialization lifecycle hook to set up
+        the underlying model.
+
+        Args:
+            __context (Any): The Pydantic validation context
+                context-history mapping.
+        """
+        if self.model is None:
+            print(
+                "Initializing LLM Engine with model context: "
+                f"{self.model_name}")
+            self.model = Small_LLM_Model()
 
     def get_token_ids(self, text: str) -> Any:
         """
