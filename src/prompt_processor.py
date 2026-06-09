@@ -1,3 +1,7 @@
+"""
+Processes target prompts by managing state flow across LLM masking routines.
+"""
+
 from typing import Any
 from pydantic import BaseModel, PrivateAttr
 from src.validator import validate_parameters, PipelineError
@@ -10,6 +14,15 @@ DEBUG = os.getenv("DEBUG") == "1"
 
 
 class PromptProcessor(BaseModel):
+    """
+    Orchestrates structured parameter and
+    function classification extraction.
+
+    Attributes:
+        prompts: Evaluation prompt instances to parse.
+        functions_definition: List tracking available system tool definitions.
+        llm: Connected runtime logic prediction interface.
+    """
     prompts: list[TestPrompt]
     functions_definition: list[FunctionDefinition]
     llm: LLMEngine
@@ -18,9 +31,26 @@ class PromptProcessor(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     def model_post_init(self, __context: Any) -> None:
+        """Post-initialization internal parameter tracking.
+
+        Args:
+            __context: Lifecycle validation context reference.
+        """
         self._total_prompts = len(self.prompts)
 
     def process(self) -> list[dict[str, Any]]:
+        """
+        Process all loaded prompt statements sequentially
+        to build output models.
+
+        Returns:
+            list[dict[str, Any]]: Validated parameters
+                combined with target names.
+
+        Raises:
+            PipelineError: If the LLM generates a function call name
+                not matching any valid predefined tool configuration.
+        """
         results = []
         fn_map = {f.name: f for f in self.functions_definition}
 
@@ -49,13 +79,28 @@ class PromptProcessor(BaseModel):
         return results
 
     def get_summary_definitions(self) -> list[dict[str, str]]:
+        """
+        Build brief metadata mappings for all registered
+        function definitions.
+
+        Returns:
+            list[dict[str, str]]: Mini-dictionaries summarizing
+                name and description entries.
+        """
         return [
             {'name': fn.name, 'description': fn.description}
             for fn in self.functions_definition
         ]
 
     def _get_valid_token_ids_cached(self, allowed_chars: str) -> set[int]:
-        """Get token IDs for allowed characters with caching."""
+        """Fetch token IDs for specified allowed characters with caching.
+
+        Args:
+            allowed_chars: A string of characters to fetch token IDs for.
+
+        Returns:
+            set[int]: Unified set containing target vocabulary tokens.
+        """
         valid_ids: set[int] = set()
         for char in allowed_chars:
             if char not in self._char_to_token_ids:
@@ -65,10 +110,17 @@ class PromptProcessor(BaseModel):
         return valid_ids
 
     def _get_function_name(self, prompt_item: TestPrompt) -> str:
-        """Identify function name using late logit masking (only very late).
+        """Identify function name using late logit masking.
 
-        Phase 1: Post-sampling filtering until prefix is 5+ chars
-        Phase 2: True logit masking when candidates are very narrow (≤2)
+        Phase 1: Post-sampling filtering until prefix is 5+ chars.
+        Phase 2: True logit masking when candidates are very narrow (≤2).
+
+        Args:
+            prompt_item: Target test data string representation
+                containing user intent.
+
+        Returns:
+            str: Resolved actual tool function name.
         """
         candidates = self.get_summary_definitions()
         running_prefix = ''
@@ -115,6 +167,16 @@ class PromptProcessor(BaseModel):
             prompt_item: TestPrompt,
             function_name: str
     ) -> dict[str, Any]:
+        """Extract all expected parameter arguments for a targeted function.
+
+        Args:
+            prompt_item: Core user query prompt statement context.
+            function_name: Selected targeted function string label.
+
+        Returns:
+            dict[str, Any]: Parsed value keyword mapping
+                containing the parameter payloads.
+        """
         target_definition = next(
             fn for fn in self.functions_definition if fn.name == function_name)
 
@@ -148,6 +210,20 @@ class PromptProcessor(BaseModel):
             function_def: FunctionDefinition,
             context_history: str
     ) -> float:
+        """Extract a precise numeric value using constrained generation.
+
+        Args:
+            prompt_item: Primary test target statement containing
+                requested numeric options.
+            function_def: Explicit structural schema definition
+                tracking data boundaries.
+            context_history: Running execution text block tracking
+                current extraction context.
+
+        Returns:
+            float: Parsed floating-point representation
+                of the numeric value, or 0.0 on fallback.
+        """
         base_prompt = (
             f"Task: Extract the numeric value for the parameter.\n"
             f"User Prompt: \"{prompt_item.prompt}\"\n"
@@ -225,6 +301,20 @@ class PromptProcessor(BaseModel):
             function_def: FunctionDefinition,
             context_history: str
     ) -> str:
+        """
+        Extract a string value using intent-based heuristics
+        and constrained logic generation.
+
+        Args:
+            prompt_item: Originating query object content data source.
+            function_def: Descriptive structure metadata definition
+                detailing argument values.
+            context_history: Tracked structural output generated
+                throughout execution tasks.
+
+        Returns:
+            str: Resolved string argument selection representation.
+        """
         prompt_lower = prompt_item.prompt.lower()
 
         # 1. DYNAMIC PARAMETER DETECTION
@@ -315,7 +405,7 @@ class PromptProcessor(BaseModel):
             if target_value:
                 remaining_target = target_value[len(current_clean):]
             else:
-                target_value = ""
+                remaining_target = ""
 
             # apply logit masking once near the end
             use_masking = (
@@ -378,10 +468,21 @@ class PromptProcessor(BaseModel):
             function_def: FunctionDefinition,
             context_history: str
     ) -> bool:
-        """Extract boolean value using late logit masking.
+        """
+        Extract a boolean parameter value using dynamic,
+        multi-phase logit masking features.
 
-        Phase 1 (Free): Generate freely (true/false semantics)
-        Phase 2 (Masked): Once first char detected, mask to only boolean chars
+        Phase 1 (Free): Generate freely (true/false semantics).
+        Phase 2 (Masked): Once first char detected, mask to only boolean chars.
+
+        Args:
+            prompt_item: Origin execution token statement metadata.
+            function_def: Schema blueprint context mapping
+                for parameter checks.
+            context_history: Running extraction context configuration sequence.
+
+        Returns:
+            bool: Extracted boolean truth representation.
         """
         base_prompt = (
             f"Task: Extract the boolean value (true or false) "

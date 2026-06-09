@@ -1,14 +1,35 @@
+"""
+Implements interaction layers and logic tuning
+for the core language model.
+"""
+
 from llm_sdk import Small_LLM_Model
 from typing import Generator, Any
 from pydantic import BaseModel, Field
 
 
 class LLMEngine(BaseModel):
+    """
+    Execution engine interface interacting with
+    underlying language model architectures.
+
+    Attributes:
+        model: Tokenizer and logic tensor evaluation instance.
+    """
     model: Small_LLM_Model = Field(default_factory=Small_LLM_Model)
     model_config = {"arbitrary_types_allowed": True}
 
     def get_token_ids(self, text: str) -> Any:
-        """Convert text to token IDs."""
+        """
+        Convert a target text segment or character into
+        its corresponding token IDs.
+
+        Args:
+            text: String target to be encoded.
+
+        Returns:
+            list[int]: A list containing the generated integer token IDs.
+        """
         tensor = self.model.encode(text)
         return tensor.tolist()[0]
 
@@ -21,9 +42,19 @@ class LLMEngine(BaseModel):
     ) -> Generator[str]:
         """Generate tokens with true logit masking.
 
-        Invalid tokens have logits set to -∞ before sampling,
-        preventing them from being selected at
-        the probability distribution level.
+        Invalid tokens have logits set to -inf before sampling,
+        preventing them from being selected at the
+        probability distribution level.
+
+        Args:
+            prompt_message: Base context instructions for the LLM.
+            previous_tokens: Accumulated assistant history tokens.
+            skip: Integer offset mapping to shift decoding indexes.
+            valid_token_ids:
+                Collection of integers representing allowed token IDs.
+
+        Yields:
+            str: Individual decoded character or token fragments.
         """
         prompt = f"<|im_start|>user\n{prompt_message}<|im_end|>\n" + \
             f"<|im_start|>assistant\n<think>\n\n</think>\n\n{previous_tokens}"

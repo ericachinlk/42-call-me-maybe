@@ -1,3 +1,8 @@
+"""
+Main entry point for the function calling validation
+and execution pipeline.
+"""
+
 from src.file_handler import load_functions, load_input, save_output
 from src.llm_engine import LLMEngine
 from src.validator import PipelineError
@@ -9,6 +14,13 @@ import time
 
 
 def parse_args() -> Any:
+    """Parse command-line arguments for the execution pipeline.
+
+    Returns:
+        argparse.Namespace: An object containing the parsed arguments,
+        including paths for function definitions, input test prompts,
+        and the output file.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--functions_definition",
@@ -21,6 +33,15 @@ def parse_args() -> Any:
 
 
 def main() -> None:
+    """Execute the core workflow of the prompt processing pipeline.
+
+    Loads input configurations, triggers the LLM logic engine to identify
+    functions and extract parameters, validates the results, and writes
+    them out to a structured JSON file.
+
+    Raises:
+        SystemExit: Terminating exit code 1 if a PipelineError is caught.
+    """
     try:
         args = parse_args()
         pipeline_start = time.perf_counter()
