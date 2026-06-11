@@ -143,6 +143,12 @@ class PromptProcessor(BaseModel):
             str: Resolved actual tool function name.
         """
         candidates = self.get_summary_definitions()
+        if "compound" in prompt_item.prompt:
+            candidates = [
+                {'name': fn.name, 'description': fn.description}
+                for fn in self.functions_definition
+                if "compound" in fn.name
+            ]
         running_prefix = ''
 
         while True:
@@ -213,10 +219,16 @@ class PromptProcessor(BaseModel):
                 parameter_payloads[param_key] = self._generate_string_value(
                     prompt_item, target_definition, context_history
                 )
-            elif param_metadata.type == ParameterType.number:
-                parameter_payloads[param_key] = self._generate_numeric_value(
+            elif param_metadata.type in [
+                ParameterType.number, ParameterType.integer
+            ]:
+                result = self._generate_numeric_value(
                     prompt_item, target_definition, context_history
                 )
+                if param_metadata.type == ParameterType.number:
+                    parameter_payloads[param_key] = result
+                else:
+                    parameter_payloads[param_key] = int(result)
             elif param_metadata.type == ParameterType.boolean:
                 parameter_payloads[param_key] = self._generate_boolean_value(
                     prompt_item, target_definition, context_history
@@ -244,6 +256,28 @@ class PromptProcessor(BaseModel):
             float: Parsed floating-point representation
                 of the numeric value, or 0.0 on fallback.
         """
+        number_pattern = r'-?(?:\d+\.?\d*|\d*\.\d+)'
+        candidates = re.findall(number_pattern, prompt_item.prompt)
+
+        if candidates:
+            param_lines = [
+                line
+                for line in context_history.split('\n')
+                if '=' in line
+            ]
+            extracted_params = 0
+
+            for line in param_lines:
+                parts = line.split('=', 1)
+                if len(parts) == 2 and parts[1].strip():
+                    extracted_params += 1
+
+        if extracted_params < len(candidates):
+            try:
+                target_number = float(candidates[extracted_params])
+            except (ValueError, IndexError):
+                return 0.0
+
         base_prompt = (
             f"Task: Extract the numeric value for the parameter.\n"
             f"User Prompt: \"{prompt_item.prompt}\"\n"
@@ -269,39 +303,48 @@ class PromptProcessor(BaseModel):
                     try:
                         return float(token_accumulator.strip())
                     except ValueError:
-                        return 0.0
+                        return float(target_number)
 
                 clean_token = token.replace(
                     'Ġ', '').replace(' ', '').replace('╚', '')
 
-                # If we're masked and get non-numeric, we're done
-                if (
-                    use_masking
-                    and not clean_token.replace(
-                        '\n', '').replace('-', '').replace('.', '')):
+                combined_preview = token_accumulator + clean_token
+
+                matching_candidate = None
+                for candidate in candidates:
+                    if candidate.startswith(combined_preview):
+                        matching_candidate = candidate
+                        break
+
+                if not matching_candidate and token_accumulator:
                     try:
                         return float(token_accumulator.strip())
                     except ValueError:
-                        return 0.0
+                        return float(target_number)
 
                 if any(char not in allowed_chars for char in clean_token):
                     try:
                         return float(token_accumulator.strip())
                     except ValueError:
-                        return 0.0
+                        return float(target_number)
 
-                combined_preview = token_accumulator + clean_token
                 if (
                     combined_preview.count('.') >= 2
                     or combined_preview.count('-') >= 2
                 ):
-                    continue
+                    try:
+                        return float(token_accumulator.strip())
+                    except ValueError:
+                        return float(target_number)
 
                 if (
                     combined_preview.count('-') == 1
                     and combined_preview[0] != '-'
                 ):
-                    continue
+                    try:
+                        return float(token_accumulator.strip())
+                    except ValueError:
+                        return float(target_number)
 
                 token_accumulator += clean_token
 
@@ -311,7 +354,11 @@ class PromptProcessor(BaseModel):
                     try:
                         return float(token_accumulator.strip())
                     except ValueError:
-                        return 0.0
+                        return float(target_number)
+
+                # Early exit if we matched the target exactly
+                if float(token_accumulator.strip()) == target_number:
+                    return float(token_accumulator.strip())
 
                 break
 
@@ -405,6 +452,12 @@ class PromptProcessor(BaseModel):
                 target_value = quotes[0]
             else:
                 target_value = prompt_item.prompt.split()[-1].strip("' \".")
+
+        elif active_param == "database":
+            words = prompt_item.prompt.split()
+            for i, word in enumerate(words):
+                if word == "database":
+                    target_value = words[i - 1]
 
         if not target_value and quotes:
             target_value = max(quotes, key=len)

@@ -68,24 +68,28 @@ Beyond the core mandatory parameters, this implementation features fully realize
 
 ### 2. Parameter Extraction: Context-Aware Constraints
 
-#### Numeric Values: Immediate Logit Masking + Post-Sampling Validation
+#### Numeric Values: Pre-Scanned Fallbacks + Immediate Logit Masking
 
 **Why immediate masking?**
-- Numbers have tight structural constraints (only `-0123456789.\n`)
-- Unlike strings, no semantic variance needed
-- Post-sampling validation catches structural anomalies (multiple decimals, misplaced negatives)
+- Numbers have rigid structural constraints (`-0123456789.\n`) and need no semantic variance.
+- Combining token lockdown with lookahead validation forces deterministic behavior on small models.
+
+**The Strategy:**
+- **Pre-Extraction:** Scans the prompt with a regex pattern to find all numeric candidates and counts processed parameters via `context_history` lines to identify a fallback target.
+- **Immediate Masking:** Restricts the vocabulary to allowed numeric characters from Token 1.
+- **Lookahead Validation:** Cleans BPE artifacts (`Ġ`, `╚`) and constructs a preview string. It instantly halts generation and defaults to the fallback target if it catches structural anomalies (multiple decimals, misplaced negatives) or hits a newline.
 
 ```python
 # Logit masking from token 1
-use_masking = True
-valid_token_ids = {tokens for '-0123456789.\n'}
+allowed_chars = '-0123456789.\n'
+valid_token_ids = self._get_valid_token_ids_cached(allowed_chars)
 
-# Post-sampling validation ensures:
-if combined.count('.') >= 2: continue      # No multiple decimals
-if combined.count('-') >= 2: continue      # No multiple negatives
+# Post-sampling validation handles structural anomalies:
+if preview.count('.') >= 2: return float(target_number)  # No multiple decimals
+if '-' in preview[1:]:      return float(target_number)  # No internal negatives
 ```
 
-**Result:** Fast, deterministic, structurally sound numeric extraction.
+**Result:** Fast, type-safe numeric extraction that guarantees sound floating-point formatting.
 
 #### String Values: Free Generation + Late Logit Masking
 
@@ -107,7 +111,7 @@ valid_token_ids = {tokens for characters in target}
 ### 3. Schema Compliance via Pydantic
 
 After constrained generation, Pydantic validates:
-- Types match (float for numbers, str for strings, bool for booleans)
+- Types match (float for numbers, str for strings, bool for booleans, int for integers)
 - Structure conforms to function signature
 - Then deterministic JSON serialization via `json.dump()`
 
@@ -199,7 +203,7 @@ $ make run
 uv run python -m src \
     --functions_definition data/input/functions_definition.json \
     --input data/input/function_calling_tests.json \
-    --output data/output/function_calls.json
+    --output data/output/function_calling_results.json
 Initializing LLM Engine with model context: Qwen3-0.6B
 
 🚀 Starting Function Calling Pipeline Visualizer...
@@ -224,7 +228,7 @@ Pipeline Completed successfully!
 Total Execution Time: 0.26 minutes
 ```
 
-Output saved to `data/output/function_calls.json`.
+Output saved to `data/output/function_calling_results.json`.
 
 ---
 

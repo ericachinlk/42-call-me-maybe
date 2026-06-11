@@ -13,6 +13,7 @@ class ParameterType(str, Enum):
     string = "string"
     number = "number"
     boolean = "boolean"
+    integer = "integer"
 
 
 class ParameterDefinition(BaseModel):
