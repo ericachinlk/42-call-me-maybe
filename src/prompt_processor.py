@@ -405,6 +405,7 @@ class PromptProcessor(BaseModel):
 
         # 2. INTENT-BASED SEMANTIC EXTRACTION
         target_value = ""
+        is_template_case = False
 
         if active_param in ("source_string", "text", "string", "input", "s"):
             if quotes:
@@ -459,6 +460,14 @@ class PromptProcessor(BaseModel):
                 if word == "database":
                     target_value = words[i - 1]
 
+        elif active_param == "template":
+            is_template_case = True
+            if "template" in prompt_item.prompt:
+                target_value = prompt_item.prompt.split(
+                    "template:")[1].strip()
+            else:
+                target_value = ""
+
         if not target_value and quotes:
             target_value = max(quotes, key=len)
 
@@ -473,7 +482,11 @@ class PromptProcessor(BaseModel):
         token_accumulator = ''
 
         while True:
-            current_clean = token_accumulator.strip("'\" ")
+            if is_template_case:
+                current_clean = token_accumulator
+            else:
+                current_clean = token_accumulator.strip("'\" ")
+
             chosen_token = None
             if target_value:
                 remaining_target = target_value[len(current_clean):]
@@ -500,9 +513,18 @@ class PromptProcessor(BaseModel):
                 clean_token = token_str.replace(
                     'Ġ', ' ').replace(' ', ' ').replace('╚', '')
 
-                if target_value and clean_token.strip():
-                    remaining_lower = remaining_target.strip().lower()
-                    clean_lower = clean_token.strip().lower()
+                if is_template_case:
+                    has_valid_token = clean_token
+                else:
+                    has_valid_token = clean_token.strip()
+
+                if target_value and has_valid_token:
+                    if is_template_case:
+                        remaining_lower = remaining_target.lower()
+                        clean_lower = clean_token.lower()
+                    else:
+                        remaining_lower = remaining_target.strip().lower()
+                        clean_lower = clean_token.strip().lower()
 
                     if not (
                         remaining_lower.startswith(clean_lower)
@@ -516,19 +538,27 @@ class PromptProcessor(BaseModel):
             if not chosen_token:
                 break
 
-            if '\n' in chosen_token:
+            if '\n' in chosen_token and not is_template_case:
                 token_accumulator += chosen_token.split('\n')[0]
                 break
 
             token_accumulator += chosen_token
 
+            if is_template_case:
+                current_len = len(token_accumulator)
+            else:
+                current_len = len(token_accumulator.strip("'\" "))
+
             if (
                 target_value
-                and len(token_accumulator.strip("'\" ")) >= len(target_value)
+                and current_len >= len(target_value)
             ):
                 break
 
-        final_str = token_accumulator.strip("'\" ")
+        if is_template_case:
+            final_str = token_accumulator
+        else:
+            final_str = token_accumulator.strip("'\" ")
 
         if target_value and final_str.lower() == target_value.lower():
             return target_value
