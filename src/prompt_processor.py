@@ -561,7 +561,15 @@ class PromptProcessor(BaseModel):
             final_str = token_accumulator.strip("'\" ")
 
         if target_value and final_str.lower() == target_value.lower():
-            return target_value
+            result = []
+            for char_target, char_ref in zip(final_str, target_value):
+                if char_ref.isupper():
+                    result.append(char_target.upper())
+                elif char_ref.islower():
+                    result.append(char_target.lower())
+                else:
+                    result.append(char_target)
+            return "".join(result)
 
         return final_str
 
